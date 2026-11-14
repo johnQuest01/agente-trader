@@ -6,6 +6,7 @@ import { aggregate, aggregateFlow } from './aggregate.js';
 import { handleReplay } from './replay.js';
 import { handleEvents } from './events.js';
 import { handleAgent } from './agent.js';
+import { handleAi } from './ai.js';
 
 const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
 const REPLAY = fileURLToPath(new URL('../public/replay.html', import.meta.url));
@@ -16,6 +17,7 @@ export function startServer({ db, symbol, port, getStatus }) {
   const clients = new Set();
   let book = null; // gravador do livro de ofertas (fase 2), ligado depois por attachBook
   let agent = null; // agente da fase 5, ligado depois por attachAgent
+  let ai = null; // conversa com a IA (fase 5), ligada depois por attachAi
 
   const json = (res, code, body) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -60,6 +62,7 @@ export function startServer({ db, symbol, port, getStatus }) {
         return res.end(html);
       }
       if (await handleAgent(req, res, url, { agent, json })) return;
+      if (await handleAi(req, res, url, { ai, json })) return;
 
       if (url.pathname === '/api/info') {
         return json(res, 200, {
@@ -175,5 +178,7 @@ export function startServer({ db, symbol, port, getStatus }) {
     attachBook: (b) => { book = b; },
     broadcastAgent: () => send('agent', { time: Date.now() }), // algo mudou no agente: a tela busca o estado de novo
     attachAgent: (a) => { agent = a; },
+    broadcastAi: () => send('ai', { time: Date.now() }), // a conversa com a IA andou: a tela busca de novo
+    attachAi: (a) => { ai = a; },
   };
 }

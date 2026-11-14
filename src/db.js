@@ -216,6 +216,37 @@ export async function openDb(file) {
       created_at   INTEGER NOT NULL,
       PRIMARY KEY (symbol, day)
     ) WITHOUT ROWID;
+
+    -- Fase 5. Conversas com a IA. Uma conversa nova comeca quando o Bruno pede, ou quando as
+    -- instrucoes, as ferramentas ou o modelo mudam (coluna setup).
+    CREATE TABLE IF NOT EXISTS ai_conversations (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT    NOT NULL,
+      started_at INTEGER NOT NULL,
+      model      TEXT    NOT NULL,
+      setup      TEXT    NOT NULL   -- resumo das instrucoes e das ferramentas com que ela comecou
+    );
+
+    -- Mensagens de cada conversa, exatamente como foram enviadas a API ou recebidas dela. A
+    -- conversa e reenviada inteira a cada pergunta, e mexer numa mensagem antiga invalida o
+    -- raciocinio que o modelo guarda de uma rodada para a outra: por isso a tabela so recebe
+    -- linhas novas (os gatilhos abaixo fazem o banco recusar alteracao e exclusao).
+    CREATE TABLE IF NOT EXISTS ai_messages (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation INTEGER NOT NULL,
+      time         INTEGER NOT NULL,
+      role         TEXT    NOT NULL,  -- 'user' ou 'assistant' (vao para a API) ou 'nota' (so para a tela)
+      content      TEXT    NOT NULL,  -- JSON do conteudo, como foi enviado ou recebido
+      shown        TEXT,              -- o que a tela mostra desta mensagem; NULL = nao aparece
+      meta         TEXT,              -- JSON: modelo, tokens, motivo da parada, consultas feitas
+      cost         REAL               -- custo estimado desta chamada, em dolares
+    );
+    CREATE INDEX IF NOT EXISTS ai_messages_conversation ON ai_messages (conversation, id);
+    CREATE INDEX IF NOT EXISTS ai_messages_time ON ai_messages (time);
+    CREATE TRIGGER IF NOT EXISTS ai_messages_no_update BEFORE UPDATE ON ai_messages
+      BEGIN SELECT RAISE(ABORT, 'as mensagens da conversa com a IA nao podem ser alteradas'); END;
+    CREATE TRIGGER IF NOT EXISTS ai_messages_no_delete BEFORE DELETE ON ai_messages
+      BEGIN SELECT RAISE(ABORT, 'as mensagens da conversa com a IA nao podem ser apagadas'); END;
   `);
 
   // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
@@ -404,6 +435,15 @@ export async function openDb(file) {
       (SELECT COALESCE(SUM(net), 0) FROM agent_proposals WHERE symbol = ? AND closed_at >= ? AND closed_at < ?) AS realized
   `);
 
+  // ---------- Fase 5: conversa com a IA ----------
+  const convInsStmt = db.prepare('INSERT INTO ai_conversations (symbol, started_at, model, setup) VALUES (?, ?, ?, ?)');
+  const convLastStmt = db.prepare(`
+    SELECT id, started_at AS startedAt, model, setup FROM ai_conversations WHERE symbol = ? ORDER BY id DESC LIMIT 1
+  `);
+  const msgInsStmt = db.prepare('INSERT INTO ai_messages (conversation, time, role, content, shown, meta, cost) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const msgListStmt = db.prepare('SELECT id, time, role, content, shown, meta, cost FROM ai_messages WHERE conversation = ? ORDER BY id');
+  const msgSpentStmt = db.prepare('SELECT COALESCE(SUM(cost), 0) AS usd FROM ai_messages WHERE time >= ? AND time < ?');
+
   const tx = (fn) => {
     db.exec('BEGIN');
     try {
@@ -515,6 +555,15 @@ export async function openDb(file) {
     agentDayGet: (symbol, day) => dayGetStmt.get(symbol, day)?.e ?? null,
     agentDaySet: (symbol, day, equity, createdAt) => daySetStmt.run(symbol, day, equity, createdAt),
     agentDayStats: (symbol, from, to) => dayStatsStmt.get(symbol, from, to, symbol, from, to),
+
+    // ---------- Fase 5: conversa com a IA ----------
+    aiConversationAdd: (c) => Number(convInsStmt.run(c.symbol, c.startedAt, c.model, c.setup).lastInsertRowid),
+    aiConversationLast: (symbol) => convLastStmt.get(symbol) ?? null,
+    aiMessageAdd: (m) => Number(msgInsStmt.run(
+      m.conversation, m.time, m.role, m.content, m.shown ?? null, m.meta ?? null, m.cost ?? null,
+    ).lastInsertRowid),
+    aiMessages: (conversation) => msgListStmt.all(conversation),
+    aiSpent: (from, to) => msgSpentStmt.get(from, to).usd, // dolares estimados gastos com a IA no periodo
 
     close: () => db.close(),
   };

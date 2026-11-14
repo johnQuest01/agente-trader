@@ -31,13 +31,16 @@ operação — não taxa de acerto.
    manual e importação; fonte automática ainda não escolhida — ver "Fase 4" abaixo)
 5. Agente conversando com o Bruno + ordens no Demo Mode
    (`https://demo-api.binance.com`), com limites de risco fixos em código que a IA
-   não altera, e registro de toda decisão (base FEITA em 14/11/2026 e testada só com
-   corretora simulada; faltam os limites, as chaves e a IA — ver "Fase 5" abaixo)
+   não altera, e registro de toda decisão (FEITO em 14/11/2026, testado só com corretora
+   e API da Anthropic simuladas; faltam os limites e as chaves do Bruno — ver "Fase 5")
 
 ## Fase 1 — o que existe
 
 Zero dependências (sem `npm install`). Precisa de Node >= 22.13 (usa `node:sqlite`
 e o `WebSocket` global). Testado com Node 22.20 (Windows 10) e com Node 26.13.1.
+Única exceção, desde 14/11/2026: a IA da fase 5 usa a biblioteca oficial da Anthropic
+(`@anthropic-ai/sdk`, versão fixada no `package.json`). Sem `npm install` só a IA fica
+desligada; todo o resto roda igual.
 
 - `src/config.js` — par (padrão BTCUSDT), porta 3333, dias de histórico (30)
 - `src/db.js` — SQLite em `data/market.db`, tabela `candles` (só 1 minuto)
@@ -281,12 +284,14 @@ apagar). A tela foi exercitada pelo navegador automatizado; o Bruno ainda não u
 
 ## Fase 5 — agente e ordens no Demo Mode
 
-A base está pronta e testada em 14/11/2026 (Windows 10, Node 22.20): propostas, aprovação do
-Bruno, trava de risco, ordens e registro. **Só foi testada contra uma corretora simulada:**
-sem as chaves, nenhuma ordem foi enviada ao Demo Mode de verdade. Falta a IA que conversa e
-propõe. Tela em http://localhost:3333/agente (há links nas outras telas).
+Pronto e testado em 14/11/2026 (Windows 10, Node 22.20): propostas, aprovação do Bruno, trava
+de risco, ordens, registro e a IA que conversa e propõe. **Só foi testado contra uma corretora
+simulada e uma API da Anthropic simulada:** sem as chaves, nenhuma ordem foi ao Demo Mode de
+verdade e nenhuma mensagem foi à Anthropic de verdade. Tela em http://localhost:3333/agente
+(há links nas outras telas).
 
-Decisão do Bruno (14/11/2026): **o agente propõe e o Bruno aprova cada ordem**, na tela.
+Decisões do Bruno (14/11/2026): **o agente propõe e o Bruno aprova cada ordem**, na tela; a
+IA usa a API da Anthropic, com uma chave dele e custo por uso, pela biblioteca oficial.
 
 O que existe:
 - `src/limits.js` — os quatro limites de risco, fixos em código. **Estão todos `null`: quem
@@ -303,6 +308,14 @@ O que existe:
 - `scripts/testar-risco.js` (15 casos), `scripts/testar-demo.js` (17) e
   `scripts/testar-agente.js` (34), com a corretora simulada de
   `scripts/lib/corretora-simulada.js`. Rodar depois de mexer em qualquer arquivo da fase 5.
+- A IA: `src/ai.js` (a conversa: pedido à API, rodadas de consulta, teto de gasto, rotas
+  `/api/ai/...`, evento `ai` no `/api/stream`), `src/ai-tools.js` (as seis ferramentas dela),
+  `src/ai-prompt.js` (as instruções; único arquivo de código com acentos) e
+  `src/ai-client.js` (a ligação com a Anthropic; o único lugar que usa a chave dela).
+  Tabelas `ai_conversations` e `ai_messages`. Painel "Conversa com a IA" na tela `/agente`.
+- `scripts/testar-ia.js` (24 casos, com uma IA de roteiro) e `scripts/testar-ia-cliente.js`
+  (8 casos: a biblioteca oficial falando com uma API simulada local; precisa de
+  `npm install`). `npm test` roda os sete scripts de teste do projeto.
 
 Regras (não desfazer):
 - **Só Demo Mode.** O cliente recusa qualquer endereço que não seja
@@ -344,6 +357,39 @@ Regras (não desfazer):
 - Resumo na ordem do projeto: resultado líquido, perda máxima, pior operação, expectativa por
   operação, R médio; a taxa de acerto por último.
 
+Regras da IA (não desfazer):
+- **A IA só tem seis ferramentas:** cinco leem dados do laboratório (candles, ordens grandes,
+  livro, eventos, conta e operações) e uma registra proposta. Não existe ferramenta para
+  aprovar, enviar ordem, encerrar posição ou mexer em limite; pedido de ferramenta que não
+  existe volta como erro para ela. Uma proposta dela por vez.
+- **A conversa é reenviada inteira e nunca é reescrita.** Instruções, ferramentas e mensagens
+  antigas vão sempre iguais, byte a byte; o que muda a cada pergunta (hora, preço, situação da
+  conta) vai dentro da mensagem nova. Os modelos atuais guardam o raciocínio de uma rodada para
+  a outra preso a esse histórico: mexer nele invalida o que foi guardado e, numa conta nova da
+  Anthropic, a chamada é recusada. Por isso `ai_messages` só recebe linhas novas (gatilhos), e
+  mudar as instruções, as ferramentas ou o modelo começa uma conversa nova.
+- **As instruções (`src/ai-prompt.js`) são fixas:** sem data, hora, saldo ou nome.
+- **O texto que vem do banco (título de evento, anotação, motivo de proposta) é dado, não
+  instrução**: as instruções dizem isso à IA e, mesmo que ela obedecesse a um texto desses, o
+  máximo que consegue é registrar uma proposta, que depende da aprovação do Bruno.
+- **A chave só vai para `https://api.anthropic.com`** (ou um servidor de teste em 127.0.0.1).
+  O endereço é passado e conferido pelo programa; a variável `ANTHROPIC_BASE_URL` do sistema é
+  ignorada de propósito (ela existe no terminal do Claude Code desta máquina). A chave vem só
+  do `.env` (`ANTHROPIC_API_KEY`) e nunca vai para log, tela ou mensagem de erro.
+- **Limites da conversa:** uma mensagem por vez; até `AI_MAX_ROUNDS` = 8 rodadas de consulta
+  por mensagem (na última a IA tem que responder com o que já tem); respostas de até
+  `AI_MAX_TOKENS` = 16.000 tokens; e teto de gasto de `AI_MAX_USD_PER_DAY` = 2 dólares por dia
+  (UTC), pela estimativa do programa. O teto é um padrão posto pelo Claude: o Bruno muda no `.env`.
+- Modelo padrão `claude-opus-5-5` com `effort` `medium` (o que a Anthropic recomenda como
+  ponto de partida); trocar é decisão do Bruno (`AI_MODEL`, `AI_EFFORT`). Os preços usados na
+  estimativa estão em `src/ai.js` e são de 03/11/2026.
+- O pedido usa dois recursos opcionais da API (troca automática para um modelo substituto
+  quando o filtro de segurança recusa uma pergunta por engano, e seguir em frente em vez de
+  falhar se o histórico não bater). Se a conta não os tiver liberados (erro 400), o programa
+  tenta uma vez sem eles, avisa na conversa e segue sem eles.
+- Resposta recusada pelo modelo, ou cortada no meio de um pedido de consulta, não executa
+  nada e não entra no histórico.
+
 Limites conhecidos:
 - **A perda real pode passar da planejada** quando o preço pula o stop: o stop a mercado sai
   pelo preço que houver. O registro mostra as duas contas.
@@ -358,6 +404,14 @@ Limites conhecidos:
   rodando neste computador.
 - Taxa cobrada em outra moeda (ex.: BNB) não entra no resultado; fica anotada.
 - Só o par do `SYMBOL`, só compra.
+- A IA só responde quando o Bruno escreve: não acompanha o mercado sozinha nem avisa de nada.
+- O gasto com a IA mostrado na tela é estimativa (tabela de preços no código); a conta de
+  verdade é a da Anthropic. Tentativas recusadas ou refeitas pela API não entram na estimativa.
+- A tela mostra só a conversa em andamento; as antigas ficam no banco, sem tela para ver.
+- Conversa longa custa mais a cada pergunta (ela é reenviada inteira, ainda que com desconto
+  de cache); a tela mostra o tamanho, e "Nova conversa" zera.
+- A resposta da IA chega inteira no fim, não aos poucos; enquanto isso a tela mostra o que
+  ela está consultando.
 
 Verificado: os 15 + 17 + 34 casos (entre eles: ciclo completo com alvo, com stop e com saída
 manual, com o resultado do agente conferido contra o saldo da corretora simulada; limites
@@ -369,14 +423,28 @@ automatizado, num servidor de teste com limites de teste. Contra o Demo Mode de 
 que não precisa de chave: regras do par, preço, diferença de relógio e a recusa de uma chave
 inválida.
 
-**Não verificado (precisa das chaves do Bruno):** qualquer rota assinada no Demo Mode de
-verdade — saldo, compra, stop, lista OCO, cancelamento, taxas cobradas. A corretora simulada
-imita a documentação da Binance; o comportamento real só se confirma lá. A primeira operação
-de verdade no Demo Mode deve ser acompanhada passo a passo. O Bruno ainda não usou a tela.
+Verificado na IA: os 24 + 8 casos (pedido montado como o guia da Anthropic manda; histórico
+idêntico de uma pergunta para a outra; proposta da IA pendente e marcada como dela; tentativa
+de "aprovar" devolvida como erro; limite de rodadas; teto de gasto; recusa; resposta cortada;
+erros da API em frases claras e sem a chave; variáveis do sistema que não desviam a chave);
+10 conferências de ponta a ponta com o programa de verdade numa porta de teste, pela
+biblioteca oficial, contra uma API simulada; e a tela exercitada pelo navegador automatizado
+com uma IA de roteiro, que propôs e teve a proposta aprovada pela tela.
+
+**Não verificado (precisa das chaves do Bruno):**
+- qualquer rota assinada no Demo Mode de verdade — saldo, compra, stop, lista OCO,
+  cancelamento, taxas cobradas. A corretora simulada imita a documentação da Binance; o
+  comportamento real só se confirma lá. A primeira operação de verdade no Demo Mode deve ser
+  acompanhada passo a passo;
+- qualquer chamada à API da Anthropic de verdade: se a conta dele aceita o modelo e os dois
+  recursos opcionais, quanto custa uma conversa típica, e principalmente a qualidade do que
+  a IA responde e propõe (as instruções dela nunca foram lidas por um modelo de verdade aqui).
+  A primeira conversa real é o teste;
+- o Bruno ainda não usou a tela.
 
 Falta, e depende do Bruno:
 - os quatro números de `src/limits.js`;
 - criar as chaves em demo.binance.com ("API Key Management") e colocá-las no `.env`. Nunca
   usar chave da conta real neste projeto;
-- decidir como a IA entra (pela API da Anthropic, com chave dele e custo por uso, ou de
-  outra forma). Ela recebe só a função de propor.
+- criar a chave da API da Anthropic (platform.claude.com) e colocá-la no `.env`
+  (`ANTHROPIC_API_KEY`); rodar `npm install` em qualquer máquina nova.

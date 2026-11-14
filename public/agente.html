@@ -65,6 +65,15 @@
   .log:first-child { border-top: 0; }
   .log time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
   .log b { margin-right: 4px; }
+  #chat { max-height: 46vh; overflow-y: auto; margin-bottom: 6px; }
+  .msg { padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.voce { background: #1b222c; }
+  .msg.ia { background: var(--panel); border: 1px solid var(--line); }
+  .msg.nota { color: var(--down); font-size: 12px; padding: 4px 10px; }
+  .msg .who, .msg .calls { display: block; color: var(--muted); font-size: 11px; white-space: normal; }
+  .msg .who { margin-bottom: 2px; } .msg .calls { margin-top: 4px; }
+  #pergunta { height: 64px; }
+  #iadoing { font-size: 12px; min-height: 16px; }
   @media (max-width: 1000px) {
     body { height: auto; } #main { flex-direction: column; }
     #left, #right { width: auto; border: 0; }
@@ -116,15 +125,28 @@
       <div id="aberta"></div>
     </section>
     <section>
+      <h3>Conversa com a IA <span class="muted" id="iamodelo"></span></h3>
+      <div class="hint" id="iaoff" style="margin: 0 0 6px"></div>
+      <div id="chat"></div>
+      <div class="muted" id="iadoing"></div>
+      <textarea id="pergunta" placeholder="Pergunte sobre o mercado ou a conta, ou peça uma análise. Enter envia; Shift+Enter quebra a linha."></textarea>
+      <div class="row">
+        <button id="enviar" class="main">Enviar</button>
+        <button id="novaconversa" title="A conversa atual fica guardada no banco, mas a IA deixa de se lembrar dela">Nova conversa</button>
+        <span class="muted" id="iagasto" style="font-size: 12px"></span>
+      </div>
+      <div class="hint">A IA lê os dados do laboratório e pode registrar propostas, que aparecem acima esperando a sua decisão. Ela não aprova nem envia ordens. Cada mensagem custa dinheiro de verdade na sua conta da Anthropic.</div>
+    </section>
+  </div>
+  <aside id="right">
+    <section>
       <h3>Resultado das operações <span class="muted">(encerradas, em USDT de demonstração)</span></h3>
-      <div class="grid" id="stats" style="max-width: 420px"></div>
+      <div class="grid" id="stats"></div>
     </section>
     <section>
       <h3>Propostas e operações</h3>
       <div id="historico"></div>
     </section>
-  </div>
-  <aside id="right">
     <section>
       <h3>Registro <span class="muted">(tudo o que foi proposto, decidido e enviado; não pode ser apagado)</span></h3>
       <div id="registro"></div>
@@ -402,11 +424,70 @@ $('propor').onclick = async () => {
   }
 };
 
-// O servidor avisa quando algo muda; alem disso a tela confere a cada 5 segundos.
+// ---------- conversa com a IA ----------
+let C = null; // a conversa, como o servidor devolveu
+
+async function loadChat() {
+  try {
+    C = await api('/api/ai/chat');
+    renderChat();
+  } catch (err) { /* o aviso de "sem resposta do servidor" ja vem da outra carga */ }
+}
+
+function renderChat() {
+  if (!C) return;
+  const st = C.status;
+  $('iamodelo').textContent = st.on ? `(${st.model})` : '(desligada)';
+  setHtml($('iaoff'), st.on ? '' : `<span class="down">A IA está desligada: ${esc(st.offReason || 'sem motivo informado')}.</span> Ela precisa de uma chave da API da Anthropic (criada em platform.claude.com) na linha ANTHROPIC_API_KEY do arquivo .env.`);
+  const box = $('chat');
+  const noFim = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const quem = { voce: 'Você', ia: 'IA', nota: 'Aviso' };
+  setHtml(box, C.messages.length ? C.messages.map((m) => `<div class="msg ${m.role}">`
+    + `<span class="who">${quem[m.role]} · ${hora(m.time)}${m.cost ? ` · cerca de US$ ${fmt(m.cost, 3)}` : ''}</span>${esc(m.text)}`
+    + `${m.calls.length ? `<span class="calls">consultou: ${esc(m.calls.map((c) => c.what + (c.error ? ' (deu erro)' : '')).join('; '))}</span>` : ''}</div>`).join('')
+    : '<div class="empty">Nenhuma mensagem nesta conversa.</div>');
+  if (noFim) box.scrollTop = box.scrollHeight;
+  $('iadoing').textContent = st.busy ? `IA: ${st.doing || 'trabalhando...'}` : '';
+  $('enviar').disabled = !st.on || st.busy;
+  $('novaconversa').disabled = st.busy || !C.messages.length;
+  $('iagasto').textContent = !st.on ? ''
+    : `Gasto estimado hoje: US$ ${fmt(st.spentToday)}${st.maxUsdPerDay > 0 ? ` de US$ ${fmt(st.maxUsdPerDay)}` : ''}`
+      + `${st.size ? ` · conversa com ${Math.round(st.size / 1000)} mil tokens` : ''}${st.priced ? '' : ' (modelo fora da tabela de preços: estimativa pelo mais caro)'}`;
+}
+
+async function enviar() {
+  const text = $('pergunta').value;
+  if (!text.trim() || $('enviar').disabled) return;
+  setMsg('');
+  $('enviar').disabled = true;
+  try {
+    C = await api('/api/ai/send', { text });
+    if ($('pergunta').value === text) $('pergunta').value = '';
+    renderChat();
+    $('chat').scrollTop = $('chat').scrollHeight;
+  } catch (err) {
+    setMsg(err.message);
+    loadChat();
+  }
+}
+$('enviar').onclick = enviar;
+$('pergunta').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); enviar(); }
+});
+$('novaconversa').onclick = async () => {
+  setMsg('');
+  try { C = await api('/api/ai/new', {}); renderChat(); } catch (err) { setMsg(err.message); }
+};
+
+// O servidor avisa quando algo muda; alem disso a tela confere a cada 5 segundos (e a cada 2,
+// enquanto a IA esta respondendo).
 const es = new EventSource('/api/stream');
 es.addEventListener('agent', load);
-setInterval(load, 5000);
+es.addEventListener('ai', loadChat);
+setInterval(() => { load(); loadChat(); }, 5000);
+setInterval(() => { if (C && C.status.busy) loadChat(); }, 2000);
 load();
+loadChat();
 </script>
 </body>
 </html>

@@ -11,7 +11,9 @@ Leia `CLAUDE.md` para o objetivo, as fases e o estado do projeto.
 
 ## Requisitos
 
-- Node >= 22.13 (testado com 22.20 e 26.13.1). Sem `npm install`: zero dependencias.
+- Node >= 22.13 (testado com 22.20 e 26.13.1). Sem `npm install`: zero dependencias, com uma
+  excecao: a IA da fase 5 usa a biblioteca oficial da Anthropic. Para liga-la, rode
+  `npm install` uma vez; sem isso, so a IA fica desligada.
 - Internet para a Binance (REST + WebSocket) e para o CDN do grafico.
 - Relogio do computador sincronizado (o programa avisa no log se estiver errado).
 
@@ -112,8 +114,7 @@ Abra http://localhost:3333/agente. Uma proposta de compra (stop obrigatorio, alv
 motivo) fica esperando a decisao; nada e enviado antes de "Aprovar" (dois cliques). Aprovada,
 a trava de risco calcula o tamanho, a compra vai para o Demo Mode da Binance (conta de
 demonstracao, sem dinheiro real) e o stop fica parado na corretora. Tudo vai para o registro,
-que nao pode ser apagado. Por enquanto as propostas entram pelo formulario da tela: a IA que
-propoe ainda nao esta ligada.
+que nao pode ser apagado. As propostas entram pelo formulario da tela ou pela IA (abaixo).
 
 Para o agente poder enviar ordens faltam duas coisas, e as duas sao de quem usa:
 
@@ -127,19 +128,43 @@ Para o agente poder enviar ordens faltam duas coisas, e as duas sao de quem usa:
 O Demo Mode tem livro de ofertas proprio: o preco acompanha o mercado de verdade, mas nao e
 igual, e o resultado de la nao prova o que aconteceria com dinheiro real.
 
+### A IA do agente
+
+Na mesma tela ha o painel "Conversa com a IA". Ela le os dados do laboratorio (candles,
+ordens grandes, livro, eventos, a conta e as operacoes passadas) e pode registrar uma
+proposta, que aparece esperando a sua decisao como qualquer outra. Ela nao aprova, nao envia
+ordem e nao muda limite: essas funcoes nao estao entre as ferramentas dela. So responde
+quando voce escreve.
+
+Para ligar:
+
 ```bash
-node scripts/testar-risco.js
-node scripts/testar-demo.js
-node scripts/testar-agente.js
+npm install
 ```
 
-conferem a trava de risco, o cliente do Demo Mode e o fluxo inteiro contra uma corretora de
-mentira (nao precisam do servidor, da internet nem de chave).
+(uma vez; baixa a biblioteca oficial da Anthropic) e preencha `ANTHROPIC_API_KEY` no arquivo
+`.env`, com uma chave criada em https://platform.claude.com. **Cada mensagem custa dinheiro de
+verdade na sua conta da Anthropic.** O modelo padrao e o Claude Opus 5.5; ha um teto de gasto
+estimado de 2 dolares por dia, que voce muda com `AI_MAX_USD_PER_DAY` (a tela mostra o gasto
+estimado do dia). `AI_MODEL` troca o modelo (`claude-sonnet-5-5` e `claude-haiku-5-5` sao mais
+baratos).
+
+### Testes da fase 5
+
+```bash
+npm test
+```
+
+roda todos os testes do projeto: a trava de risco, o cliente do Demo Mode, o fluxo inteiro
+contra uma corretora de mentira, a conversa com uma IA de roteiro e a biblioteca da Anthropic
+contra uma API de mentira, alem dos testes do replay e dos eventos. Nenhum usa a internet,
+chave de verdade ou dinheiro. (`scripts/testar-ia-cliente.js` precisa do `npm install`.)
 
 ## Variaveis de ambiente
 
 `SYMBOL`, `PORT`, `BACKFILL_DAYS`, `BINANCE_REST`, `BINANCE_WS`, `TRADES`, `TRADES_KEEP_DAYS`,
 `TRADES_BACKFILL_HOURS`, `TRADES_MAX_GAP_HOURS`, `BIG_ORDER_USDT`, `BOOK`, `BOOK_KEEP_DAYS`,
-`REPLAY_FEE_PCT`, `AGENT_FEE_PCT`, `AGENT_PROPOSAL_TTL_MIN`, `AGENT_MAX_SLIP_PCT`, `DEMO_URL`
+`REPLAY_FEE_PCT`, `AGENT_FEE_PCT`, `AGENT_PROPOSAL_TTL_MIN`, `AGENT_MAX_SLIP_PCT`, `DEMO_URL`,
+`AI_MODEL`, `AI_EFFORT`, `AI_MAX_TOKENS`, `AI_MAX_ROUNDS`, `AI_MAX_USD_PER_DAY`, `AI_URL`
 (ver `src/config.js`). Elas tambem podem ficar no arquivo `.env`, que o git ignora; os limites
 de risco nao sao variaveis: ficam so em `src/limits.js`.

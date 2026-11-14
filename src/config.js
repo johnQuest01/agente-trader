@@ -58,6 +58,26 @@ export const AGENT_PROPOSAL_TTL_MIN = Number(process.env.AGENT_PROPOSAL_TTL_MIN 
 // Quanto acima da oferta de agora a compra aceita pagar, em %. E o teto da derrapagem na entrada.
 export const AGENT_MAX_SLIP_PCT = Number(process.env.AGENT_MAX_SLIP_PCT || 0.05);
 
+// ---------- Fase 5: a IA que conversa e propoe (API da Anthropic) ----------
+// A chave fica so no arquivo .env (ANTHROPIC_API_KEY). Cada mensagem custa dinheiro de verdade.
+// Modelo. O padrao e o Claude Opus 5.5 (US$ 4 por milhao de tokens de entrada e US$ 20 de
+// saida, em 03/11/2026). Mais baratos: claude-sonnet-5-5 (US$ 2 / 10) e claude-haiku-5-5
+// (US$ 0,10 / 0,50). Trocar de modelo comeca uma conversa nova.
+export const AI_MODEL = process.env.AI_MODEL || 'claude-opus-5-5';
+// Quanto o modelo pensa antes de responder: low, medium, high, xhigh ou max. Mais alto = mais
+// lento e mais caro. "medium" e o ponto de partida que a Anthropic recomenda para este modelo.
+export const AI_EFFORT = process.env.AI_EFFORT || 'medium';
+// Tamanho maximo de cada resposta (o raciocinio do modelo tambem conta), em tokens.
+export const AI_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS || 16_000);
+// Quantas rodadas de consulta aos dados a IA pode fazer para responder uma mensagem.
+export const AI_MAX_ROUNDS = Number(process.env.AI_MAX_ROUNDS || 8);
+// Teto de gasto com a IA por dia (UTC), em dolares, pela estimativa do programa. Atingido, a
+// IA para de responder ate o dia seguinte. 0 = sem teto.
+export const AI_MAX_USD_PER_DAY = Number(process.env.AI_MAX_USD_PER_DAY || 2);
+// Endereco da API. So e aceito o da Anthropic ou um servidor de teste nesta mesma maquina (a
+// conferencia esta em src/ai-client.js). A variavel ANTHROPIC_BASE_URL do sistema e ignorada.
+export const AI_URL = process.env.AI_URL || 'https://api.anthropic.com';
+
 // Guardamos so candles de 1 minuto; os outros tempos sao calculados a partir deles.
 export const TIMEFRAMES = {
   '1m': 1 * MINUTE,

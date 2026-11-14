@@ -2,6 +2,7 @@ import { envFileError, demoKeys } from './env.js'; // primeiro: le o .env antes 
 import {
   SYMBOL, PORT, BACKFILL_DAYS, DB_FILE, TRADES, BOOK,
   DEMO_URL, AGENT_FEE_PCT, AGENT_PROPOSAL_TTL_MIN, AGENT_MAX_SLIP_PCT,
+  AI_MODEL, AI_EFFORT, AI_MAX_TOKENS, AI_MAX_ROUNDS, AI_MAX_USD_PER_DAY, AI_URL,
 } from './config.js';
 
 const [major, minor] = process.versions.node.split('.').map(Number);
@@ -64,6 +65,24 @@ log(demoClient
   ? `agente: chaves do Demo Mode encontradas; ordens so para ${demoClient.origin}`
   : 'agente: sem chaves do Demo Mode no arquivo .env: nenhuma ordem sera enviada');
 if (limitsProblem(LIMITS)) log(`agente: ${limitsProblem(LIMITS)} (src/limits.js): nenhuma ordem sera enviada`);
+
+// Fase 5: a IA que conversa e propoe (API da Anthropic). Sem a chave no .env ela fica desligada
+// e o resto do programa funciona igual. Ela recebe o agente so para ler a situacao e registrar
+// propostas: aprovar e enviar ordem nao estao entre as ferramentas dela.
+let book = null; // gravador do livro de ofertas (fase 2); comeca mais abaixo
+const { createAi } = await import('./ai.js');
+const { createAiTransport } = await import('./ai-client.js');
+const aiLink = await createAiTransport({ baseUrl: AI_URL });
+const ai = createAi({
+  db, symbol: SYMBOL, agent, book: () => book?.view() ?? null,
+  transport: aiLink.transport, offReason: aiLink.offReason,
+  model: AI_MODEL, effort: AI_EFFORT, maxTokens: AI_MAX_TOKENS, maxRounds: AI_MAX_ROUNDS, maxUsdPerDay: AI_MAX_USD_PER_DAY,
+  log, onChange: () => app.broadcastAi(),
+});
+app.attachAi(ai);
+log(aiLink.transport
+  ? `ia: ligada (modelo ${AI_MODEL}; teto de gasto estimado de US$ ${AI_MAX_USD_PER_DAY} por dia)`
+  : `ia: desligada (${aiLink.offReason})`);
 
 let filling = null;
 let retryTimer = null;
@@ -146,7 +165,6 @@ if (TRADES) {
 }
 
 // Fase 2: livro de ofertas, tambem em conexao propria.
-let book = null;
 if (BOOK) {
   const { startBook } = await import('./book.js');
   status.book = { live: false, synced: false };
