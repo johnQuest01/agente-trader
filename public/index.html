@@ -79,6 +79,8 @@ if (!TF_MS[tf]) { tf = '1m'; localStorage.setItem('tf', tf); }
 let lastBar = null;      // ultimo candle do tempo grafico atual
 let lastPrice = null;
 let loading = false;
+let loadSeq = 0;           // numero da carga mais recente; so ela pode desenhar no grafico
+const missed = new Map();  // candles ao vivo que chegaram durante uma carga (o ultimo de cada minuto)
 
 const chart = LightweightCharts.createChart($('chart'), {
   autoSize: true,
@@ -122,12 +124,16 @@ function showPrice(p) {
 }
 
 async function load() {
+  const seq = ++loadSeq;
   loading = true;
   clearTimeout(tailTimer); tailTimer = null; // atualizacao pendente do tempo grafico anterior
   try {
-    const asked = tf;
-    const rows = await (await fetch(`/api/candles?tf=${asked}&limit=1500`)).json();
-    if (asked !== tf) return; // usuario trocou de novo enquanto carregava
+    const rows = await (await fetch(`/api/candles?tf=${tf}&limit=1500`)).json();
+    // Se outra carga comecou enquanto esta esperava (troca rapida de tempo grafico ou
+    // reconexao), esta resposta ja esta velha: so a carga mais recente desenha. Comparar so
+    // o tempo grafico nao basta: duas cargas do mesmo tempo, ou ida e volta (1m, 1d, 1m),
+    // passariam, e venceria a resposta que chegasse por ultimo.
+    if (seq !== loadSeq) return;
     $('empty').style.display = rows.length ? 'none' : 'grid';
     chart.timeScale().applyOptions({ timeVisible: tf !== '1d' });
     candles.setData(rows.map(cBar));
@@ -138,8 +144,25 @@ async function load() {
     if (rows.length * 6 < chart.timeScale().width()) chart.timeScale().fitContent();
     else chart.timeScale().scrollToRealTime();
   } finally {
-    loading = false;
+    if (seq === loadSeq) {
+      loading = false;
+      // Aplica os candles ao vivo que chegaram durante a carga, na ordem em que vieram.
+      const fila = [...missed.values()];
+      missed.clear();
+      for (const c of fila) applyCandle(c);
+    }
   }
+}
+
+// Poe um candle na ponta do grafico. Nunca anda para tras: ignora candle anterior ao ultimo
+// e ignora uma versao mais antiga do mesmo candle (o numero de negocios so cresce).
+function putBar(c) {
+  if (lastBar) {
+    if (c.openTime < lastBar.openTime) return false;
+    if (c.openTime === lastBar.openTime && c.trades < lastBar.trades) return false;
+  }
+  candles.update(cBar(c)); volume.update(vBar(c)); lastBar = c;
+  return true;
 }
 
 // Atualiza so a ponta do grafico (os 2 ultimos candles) para tempos maiores que 1m.
@@ -149,27 +172,26 @@ function refreshTail() {
   tailTimer = setTimeout(async () => {
     tailTimer = null;
     if (loading) return;
-    const asked = tf;
-    const rows = await (await fetch(`/api/candles?tf=${asked}&limit=2`)).json();
-    if (asked !== tf) return;
-    for (const r of rows) {
-      if (lastBar && r.openTime < lastBar.openTime) continue;
-      candles.update(cBar(r)); volume.update(vBar(r)); lastBar = r;
-    }
+    const seq = loadSeq;
+    const rows = await (await fetch(`/api/candles?tf=${tf}&limit=2`)).json();
+    if (seq !== loadSeq) return; // houve uma carga completa nesse meio tempo: ela e mais nova
+    for (const r of rows) putBar(r);
     showStats(lastBar);
   }, 1500);
 }
 
-function onCandle(c) {
-  showPrice(c.close);
-  if (loading) return;
+function applyCandle(c) {
   if (tf === '1m') {
-    if (lastBar && c.openTime < lastBar.openTime) return;
-    candles.update(cBar(c)); volume.update(vBar(c)); lastBar = c; showStats(c);
-    $('empty').style.display = 'none';
+    if (putBar(c)) { showStats(c); $('empty').style.display = 'none'; }
   } else {
     refreshTail();
   }
+}
+
+function onCandle(c) {
+  showPrice(c.close);
+  if (loading) { missed.set(c.openTime, c); return; } // a carga em andamento aplica depois
+  applyCandle(c);
 }
 
 function onStatus(s) {
@@ -192,19 +214,33 @@ function buildTfs() {
   }
 }
 
+// Liga o fluxo ao vivo do servidor. Se a conexao cair e voltar, a pagina ficou um tempo sem
+// receber candles: recarrega o grafico inteiro, senao sobra um buraco ate alguem apertar F5.
+let dropped = false;
+function connect() {
+  const es = new EventSource('/api/stream');
+  es.addEventListener('candle', (e) => onCandle(JSON.parse(e.data)));
+  es.addEventListener('status', (e) => onStatus(JSON.parse(e.data)));
+  es.onopen = () => {
+    if (!dropped) return;
+    dropped = false;
+    load();
+  };
+  es.onerror = () => {
+    dropped = true;
+    $('dot').className = 'dot'; $('st').textContent = 'servidor parado';
+    // O navegador costuma reconectar sozinho; se ele desistir (CLOSED), tentamos de novo.
+    if (es.readyState === EventSource.CLOSED) setTimeout(connect, 3000);
+  };
+}
+
 async function init() {
   const info = await (await fetch('/api/info')).json();
   $('pair').textContent = info.symbol.replace('USDT', '/USDT');
   buildTfs();
   onStatus(info);
+  connect();    // liga o ao vivo antes da carga: o que chegar durante ela fica na fila
   await load();
-  const es = new EventSource('/api/stream');
-  es.addEventListener('candle', (e) => onCandle(JSON.parse(e.data)));
-  es.addEventListener('status', (e) => onStatus(JSON.parse(e.data)));
-  es.onerror = () => { $('dot').className = 'dot'; $('st').textContent = 'servidor parado'; };
-  // Se o SSE caiu e voltou, candles podem ter ficado de fora: recarrega o grafico.
-  let firstOpen = true;
-  es.onopen = () => { if (firstOpen) { firstOpen = false; return; } load(); };
 }
 init();
 </script>

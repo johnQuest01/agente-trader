@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 export const SYMBOL = (process.env.SYMBOL || 'BTCUSDT').toUpperCase();
 export const PORT = Number(process.env.PORT || 3333);
 
-// Quantos dias de historico de 1 minuto baixar na primeira execucao.
+// Quantos dias de historico de 1 minuto baixar na primeira execucao. O download comeca as
+// 00:00 UTC do dia que cair nessa conta, entao vem ate um dia a mais (ver backfill).
 export const BACKFILL_DAYS = Number(process.env.BACKFILL_DAYS || 30);
 
 export const REST_URL = process.env.BINANCE_REST || 'https://api.binance.com';

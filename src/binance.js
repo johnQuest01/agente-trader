@@ -1,11 +1,13 @@
 import { REST_URL, WS_URL, MINUTE } from './config.js';
 
-const DAY = 24 * 60 * MINUTE;
+const DAY = 24 * 60 * MINUTE; // o maior tempo grafico que montamos (1d)
+const dayStart = (ms) => Math.floor(ms / DAY) * DAY; // 00:00 UTC do dia
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Formato REST: [openTime, open, high, low, close, volume, closeTime,
 //                quoteVolume, trades, takerBuyBase, takerBuyQuote, ignore]
-function fromRest(symbol, k, now) {
+// `closedBefore`: so marca como fechado o candle que fechou antes desse horario (ver fillSegment).
+function fromRest(symbol, k, closedBefore) {
   return {
     symbol,
     openTime: k[0],
@@ -17,12 +19,14 @@ function fromRest(symbol, k, now) {
     quoteVolume: +k[7],
     trades: k[8],
     takerBuyVolume: +k[9],
-    closed: k[6] < now,
+    closed: k[6] < closedBefore,
   };
 }
 
-async function fetchKlines(symbol, startTime) {
-  const url = `${REST_URL}/api/v3/klines?symbol=${symbol}&interval=1m&startTime=${startTime}&limit=1000`;
+// `endTime` (opcional) limita pelo horario de abertura: so vem candle que abriu ate ali.
+async function fetchKlines(symbol, startTime, endTime) {
+  let url = `${REST_URL}/api/v3/klines?symbol=${symbol}&interval=1m&startTime=${startTime}&limit=1000`;
+  if (endTime !== undefined) url += `&endTime=${endTime}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -40,28 +44,34 @@ async function clockOffset(log) {
   const res = await fetch(`${REST_URL}/api/v3/time`, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`Binance respondeu ${res.status} em /api/v3/time`);
   const { serverTime } = await res.json();
-  const offset = serverTime - (before + Date.now()) / 2; // ms a somar no relogio local
+  const after = Date.now();
+  const offset = serverTime - (before + after) / 2; // ms a somar no relogio local
   // Avisa uma vez (e de novo so se o desvio mudar mais de 5 s), nao a cada reconexao.
   if (Math.abs(offset) > 30_000 && (lastWarnedOffset === null || Math.abs(offset - lastWarnedOffset) > 5_000)) {
     const s = Math.round(Math.abs(offset) / 1000);
     log(`AVISO: relogio do PC esta ${s}s ${offset > 0 ? 'atrasado' : 'adiantado'} em relacao a Binance; sincronize o relogio do Windows`);
     lastWarnedOffset = offset;
   }
-  return offset;
+  // Nao sabemos em que ponto da ida e volta a Binance leu o relogio dela, entao o horario
+  // calculado pode estar errado em ate metade do tempo que a consulta levou.
+  return { offset, error: (after - before) / 2 };
 }
 
-async function fillSegment(db, symbol, from, to, clock, log) {
+// Baixa os candles de `from` ate `to`. Com `endTime`, para exatamente ali (usado no trecho
+// antigo, para nao baixar de novo o que o banco ja tem); sem ele, vai ate o candle atual.
+async function fillSegment(db, symbol, from, to, closedBefore, log, endTime) {
   let cursor = from;
   let total = 0;
   while (cursor < to) {
-    // O instante de referencia e ANTES do pedido: tudo que a Binance ja tinha fechado antes
-    // de receber o pedido esta, por construcao, completo na resposta. (Se usassemos o
-    // instante da chegada, um minuto que fechasse durante a viagem seria gravado como
-    // "fechado" com dados parciais.)
-    const before = clock();
-    const rows = await fetchKlines(symbol, cursor);
+    // O instante de referencia e tirado ANTES do pedido, nunca na chegada da resposta. A
+    // resposta e uma foto tirada depois da pergunta: o candle que ja tinha fechado (com
+    // folga, ver `closedBefore` em backfill) quando perguntamos veio com o dado definitivo.
+    // Usando o instante da chegada, um minuto que fechasse durante a viagem seria gravado
+    // como "fechado" com dados parciais, e nunca mais seria corrigido.
+    const limit = closedBefore();
+    const rows = await fetchKlines(symbol, cursor, endTime);
     if (!rows.length) break;
-    db.upsertMany(rows.map((k) => fromRest(symbol, k, before)));
+    db.upsertMany(rows.map((k) => fromRest(symbol, k, limit)));
     total += rows.length;
     cursor = rows[rows.length - 1][0] + MINUTE;
     if (total % 10_000 < rows.length) {
@@ -73,33 +83,60 @@ async function fillSegment(db, symbol, from, to, clock, log) {
   return total;
 }
 
+// Folga para aceitar um candle como fechado: da tempo de a Binance terminar de consolidar o
+// candle que acabou de fechar. Medido em 14/11/2026: em 1 de 4 viradas de minuto a API de
+// historico ainda devolvia o candle incompleto cerca de 0,5 s depois do fechamento. O erro
+// possivel do nosso relogio e somado a ela (ver backfill).
+const CLOSE_SLACK = 2000;
+
 // Baixa o historico que falta: o trecho antigo (se pediu mais dias) e o buraco ate agora.
+//
+// O historico comeca sempre as 00:00 UTC. Os candles de 5m, 15m, 1h, 4h e 1d sao montados a
+// partir dos de 1 minuto, e todos abrem em multiplos exatos contados de 00:00 UTC. Se o banco
+// comecasse no meio do dia, o primeiro candle de cada um desses tempos ficaria sem os minutos
+// anteriores e apareceria como se fosse um candle inteiro (maxima, minima e volume errados).
 export async function backfill(db, symbol, days, log = () => {}) {
-  const offset = await clockOffset(log);
+  const { offset, error } = await clockOffset(log);
   const clock = () => Date.now() + offset;
+  // So gravamos como fechado o candle que fechou antes deste horario: a hora da Binance, menos
+  // o erro possivel do nosso relogio, menos a folga. O que fechou depois disso entra como
+  // provisorio e e buscado de novo no fim desta funcao.
+  const closedBefore = () => clock() - error - CLOSE_SLACK;
   const now = clock();
-  // Comeca em 00:00 UTC, para que o primeiro candle de 1d (e 4h, 1h...) seja completo,
-  // e nao um pedaco de dia que parece um candle de verdade.
-  const target = Math.floor((now - days * DAY) / DAY) * DAY;
+  const target = dayStart(now - days * DAY);
   const first = db.firstOpenTime(symbol);
   const last = db.lastOpenTime(symbol);
   let total = 0;
   if (first === null) {
-    total += await fillSegment(db, symbol, target, now, clock, log);
+    total += await fillSegment(db, symbol, target, now, closedBefore, log);
   } else {
-    if (first > target) total += await fillSegment(db, symbol, target, first, clock, log);
+    // Completa tambem o dia do primeiro candle ja gravado: um banco criado antes desta regra
+    // comeca no meio do dia, e `target` avanca a cada dia que passa.
+    const start = Math.min(target, dayStart(first));
+    if (first > start) total += await fillSegment(db, symbol, start, first, closedBefore, log, first - 1);
     // Retoma do primeiro candle ainda marcado como aberto (ou do ultimo, se todos fecharam):
     // assim um candle gravado como provisorio e sempre refeito com o dado definitivo.
     const resume = Math.min(last, db.firstUnclosedOpenTime(symbol) ?? last);
-    total += await fillSegment(db, symbol, resume, now, clock, log);
+    total += await fillSegment(db, symbol, resume, now, closedBefore, log);
+  }
+  // Um candle que fechou ha instantes ficou provisorio por causa da folga. Espera a folga passar
+  // e busca de novo, para que ao sair daqui so o candle do minuto atual esteja em aberto.
+  for (let i = 0; i < 3; i++) {
+    const pending = db.firstUnclosedOpenTime(symbol);
+    if (pending === null || pending + MINUTE > clock()) break; // so o minuto atual: normal
+    await sleep(Math.max(0, pending + MINUTE - closedBefore()) + 100);
+    total += await fillSegment(db, symbol, pending, clock(), closedBefore, log);
   }
   return total;
 }
 
 // Fluxo ao vivo dos candles de 1 minuto, com reconexao automatica.
 //
-// Duas formas de a conexao morrer:
+// Tres formas de a conexao morrer:
 //  - o outro lado fecha o TCP: chega o evento 'close' e reconectamos;
+//  - a tentativa de conectar falha (sem internet, sem DNS, porta recusada): no Node 22 chega
+//    so o evento 'error', nunca 'close', e o socket fica parado em CONNECTING. Por isso
+//    'error' tambem leva direto a nova tentativa, sem esperar o limite do handshake;
 //  - a rede some em silencio (cabo, Wi-Fi, NAT): nada chega. O watchdog detecta 60 s sem
 //    mensagem. Nao da para esperar o fechamento gracioso (ws.close() manda um frame e espera
 //    resposta que nunca vem; o WebSocket do Node ficaria em CLOSING para sempre), entao
@@ -173,7 +210,11 @@ export function streamKlines(symbol, { onCandle, onOpen, onStatus, log = () => {
         closed: !!k.x,
       });
     });
-    sock.addEventListener('error', () => {});
+    sock.addEventListener('error', () => {
+      clearTimeout(handshake);
+      if (ws !== sock) return; // socket abandonado
+      dropAndReconnect('falha na conexao');
+    });
     sock.addEventListener('close', () => {
       clearTimeout(handshake);
       if (ws !== sock) return; // socket abandonado que finalmente morreu

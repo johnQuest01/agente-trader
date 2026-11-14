@@ -27,6 +27,13 @@ export async function openDb(file) {
     ) WITHOUT ROWID;
   `);
 
+  // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
+  // gravam ao mesmo tempo, e uma resposta do historico pode chegar atrasada, com uma foto do
+  // candle mais velha do que a que ja esta no banco. Por isso a gravacao so substitui quando:
+  //   - o novo esta fechado e o do banco ainda nao (o definitivo troca o provisorio); ou
+  //   - os dois estao no mesmo estado e o novo tem pelo menos tantos negocios quanto o do
+  //     banco (o numero de negocios de um candle so cresce, entao serve de "versao").
+  // Um candle provisorio nunca substitui um fechado.
   const upsertStmt = db.prepare(`
     INSERT INTO candles
       (symbol, open_time, open, high, low, close, volume, quote_volume, trades, taker_buy_volume, closed)
@@ -35,6 +42,8 @@ export async function openDb(file) {
       open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close,
       volume = excluded.volume, quote_volume = excluded.quote_volume, trades = excluded.trades,
       taker_buy_volume = excluded.taker_buy_volume, closed = excluded.closed
+    WHERE excluded.closed > candles.closed
+       OR (excluded.closed = candles.closed AND excluded.trades >= candles.trades)
   `);
   const firstStmt = db.prepare('SELECT MIN(open_time) AS t FROM candles WHERE symbol = ?');
   const lastStmt = db.prepare('SELECT MAX(open_time) AS t FROM candles WHERE symbol = ?');

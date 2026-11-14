@@ -2,8 +2,9 @@
 //
 //   node scripts/validar.js             (precisa do servidor rodando em http://localhost:3333)
 //   node scripts/validar.js --sem-api   (pula a parte que usa /api/candles; so banco x Binance)
-//   node scripts/validar.js --completo  (compara TODOS os candles de 1m, nao so 20; ~4 min
-//                                        para 30 dias, 44 requisicoes de peso baixo)
+//   node scripts/validar.js --completo  (compara TODOS os candles de 1m, nao so 20; 45
+//                                        requisicoes de peso baixo para 30 dias: de ~20 s a
+//                                        alguns minutos, conforme a conexao)
 //
 // O que confere:
 //   0. Cobertura (o historico comeca onde deveria) e frescor (o ultimo candle e o minuto atual),
@@ -14,6 +15,8 @@
 //      Confere a flag `complete`: o primeiro e o ultimo bucket podem ser parciais e tem que vir
 //      marcados; qualquer bucket do meio marcado como parcial e buraco; qualquer bucket marcado
 //      como completo tem que ter todos os minutos.
+//      Mais o primeiro candle de 5m, 15m, 1h, 4h e 1d (a borda do historico) x Binance: se o
+//      banco comecar no meio de um candle maior, o nosso sai sem os minutos anteriores.
 //   3. Buracos: lista qualquer minuto faltando entre o primeiro e o ultimo candle do banco.
 //   4. Sanidade: duplicados, candles marcados como abertos.
 //
@@ -208,6 +211,33 @@ if (!SEM_API) {
       tabela(linhas);
       console.log('');
     }
+
+    // Borda do historico: o primeiro candle de cada tempo grafico. Se o banco comecar no meio
+    // de um candle maior, o nosso sai so com os minutos que temos e difere da Binance. A amostra
+    // acima nao pega isso, porque so sorteia buckets marcados como completos. O backfill
+    // completa o primeiro dia do banco, entao aqui tem que dar identico.
+    console.log('== 2b. primeiro candle de cada tempo grafico (borda do historico) x Binance ==');
+    const borda = [];
+    for (const [tf, ms] of [['5m', 300_000], ['15m', 900_000], ['1h', 3600_000], ['4h', 14_400_000], ['1d', DAY]]) {
+      const inicio = Math.floor(geral.f / ms) * ms;
+      let c = null, b = null, resultado;
+      if (inicio + ms > serverTime) {
+        resultado = 'ainda aberto, nao comparado';
+      } else {
+        [c] = await (await fetch(`${API}/api/candles?tf=${tf}&limit=1&to=${inicio + ms - MINUTE}`)).json();
+        [b] = await binance(tf, inicio, 1);
+        const difs = c && b && b.openTime === c.openTime ? comparar(c, b, true) : ['Binance nao devolveu esse candle'];
+        if (difs.length) falhas++;
+        resultado = difs.length ? 'DIFERENTE: ' + difs.join('; ') : 'identico (volumes dentro do arredondamento)';
+      }
+      borda.push({
+        tf, 'abertura (UTC)': iso(inicio), open: c?.open ?? '-', high: c?.high ?? '-', low: c?.low ?? '-',
+        close: c?.close ?? '-', volume: c ? +c.volume.toFixed(5) : '-', 'volume Binance': b ? b.volume : '-',
+        trades: c?.trades ?? '-', resultado,
+      });
+    }
+    tabela(borda);
+    console.log('');
   }
 }
 
