@@ -39,7 +39,22 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--down); }
   .dot.live { background: var(--up); }
   .dot.fill { background: var(--accent); }
-  #chart { flex: 1; min-height: 0; }
+  #main { flex: 1; min-height: 0; display: flex; }
+  #charts { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #chart { flex: 3; min-height: 0; }
+  #flowwrap { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  #flow { flex: 1; min-height: 0; }
+  .cap { padding: 3px 16px; color: var(--muted); font-size: 11px; }
+  .cap i { font-style: normal; color: var(--accent); }
+  #big { width: 286px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
+  #big .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  #big select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 12px; }
+  #biglist { flex: 1; min-height: 0; overflow-y: auto; font-variant-numeric: tabular-nums; font-size: 12px; }
+  #biglist .row { display: grid; grid-template-columns: 54px 1fr auto; gap: 6px; padding: 5px 12px; border-bottom: 1px solid #1a2029; white-space: nowrap; cursor: default; }
+  #biglist .row small { color: var(--muted); }
+  #biglist .none { padding: 14px 12px; color: var(--muted); }
+  #big .foot { padding: 6px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+  @media (max-width: 900px) { #big { display: none; } }
   #empty {
     position: fixed; inset: 0; display: none; place-items: center; text-align: center;
     color: var(--muted); pointer-events: none; padding: 24px;
@@ -57,10 +72,33 @@
     <div class="stat"><span>Variação do candle</span><b id="chg">—</b></div>
     <div class="stat"><span>Volume do candle</span><b id="vol">—</b></div>
     <div class="stat"><span>Agressão compradora</span><b id="buy">—</b><div class="bar"><i id="buybar"></i></div></div>
+    <div class="stat"><span>Saldo de agressão</span><b id="delta">—</b></div>
     <div class="status"><div class="dot" id="dot"></div><span id="st">conectando…</span></div>
   </div>
 </header>
-<div id="chart"></div>
+<div id="main">
+  <div id="charts">
+    <div id="chart"></div>
+    <div id="flowwrap">
+      <div class="cap">Saldo de agressão por candle, em BTC (barras: compra − venda) · <i>linha: saldo acumulado na tela</i></div>
+      <div id="flow"></div>
+    </div>
+  </div>
+  <aside id="big">
+    <div class="head">
+      <span>Ordens grandes</span>
+      <select id="bigmin" title="Valor mínimo da ordem">
+        <option value="50000">≥ 50 mil</option>
+        <option value="100000">≥ 100 mil</option>
+        <option value="250000">≥ 250 mil</option>
+        <option value="500000">≥ 500 mil</option>
+        <option value="1000000">≥ 1 milhão</option>
+      </select>
+    </div>
+    <div id="biglist"></div>
+    <div class="foot">Valores em USDT. Uma ordem que varre vários preços aparece somada.</div>
+  </aside>
+</div>
 <div id="empty">Ainda sem dados. O histórico está sendo baixado; a página atualiza sozinha.</div>
 
 <script>
@@ -71,7 +109,7 @@ const toTime = (ms) => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() 
 // Candle diario e o dia UTC da Binance (00:00 UTC = 21:00 em Sao Paulo): rotulamos pela
 // data UTC, como a propria Binance faz, em vez de "dia anterior as 21:00".
 const toDay = (ms) => new Date(ms).toISOString().slice(0, 10);
-const UP = '#2ebd85', DOWN = '#f6465d';
+const UP = '#2ebd85', DOWN = '#f6465d', ACCENT = '#f0b90b';
 const TF_MS = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3, '1d': 86400e3 };
 
 let tf = localStorage.getItem('tf') || '1m';
@@ -81,13 +119,17 @@ let lastPrice = null;
 let loading = false;
 let loadSeq = 0;           // numero da carga mais recente; so ela pode desenhar no grafico
 const missed = new Map();  // candles ao vivo que chegaram durante uma carga (o ultimo de cada minuto)
+let cumBefore = 0;         // saldo de agressao acumulado ate o candle anterior ao ultimo
+let firstOpenTime = null;  // abertura do primeiro candle na tela
 
+const LAYOUT = { background: { color: '#0d1014' }, textColor: '#9aa4b1' };
+const GRID = { vertLines: { color: '#1a2029' }, horzLines: { color: '#1a2029' } };
+// Os dois graficos usam a mesma largura de escala de preco, para os candles de cima ficarem
+// alinhados com as barras de baixo. O eixo do tempo aparece so no de baixo.
+const SCALE = { borderColor: '#232a34', minimumWidth: 84 };
 const chart = LightweightCharts.createChart($('chart'), {
-  autoSize: true,
-  layout: { background: { color: '#0d1014' }, textColor: '#9aa4b1' },
-  grid: { vertLines: { color: '#1a2029' }, horzLines: { color: '#1a2029' } },
-  rightPriceScale: { borderColor: '#232a34' },
-  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false },
+  autoSize: true, layout: LAYOUT, grid: GRID, rightPriceScale: SCALE,
+  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false, visible: false },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
 });
 const candles = chart.addCandlestickSeries({
@@ -99,10 +141,41 @@ const volume = chart.addHistogramSeries({
 });
 volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
+// Painel de fluxo. O saldo de agressao de cada candle (compra agressora menos venda agressora)
+// sai do proprio candle: a Binance informa o volume total e o volume de agressao compradora,
+// entao saldo = 2 x compra - total. Vale para todo o historico, nao so para o que a fase 2 gravou.
+const flowChart = LightweightCharts.createChart($('flow'), {
+  autoSize: true, layout: LAYOUT, grid: GRID, rightPriceScale: SCALE,
+  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+});
+const deltaBars = flowChart.addHistogramSeries({
+  priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false,
+});
+const cvdLine = flowChart.addLineSeries({
+  priceScaleId: 'cvd', color: ACCENT, lineWidth: 2,
+  lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+});
+flowChart.priceScale('cvd').applyOptions({ scaleMargins: { top: 0.08, bottom: 0.08 } });
+
+// Os dois graficos andam juntos: mover ou dar zoom em um move o outro.
+let syncing = false;
+const follow = (a, b) => a.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+  if (syncing || !range) return;
+  syncing = true;
+  b.timeScale().setVisibleLogicalRange(range);
+  syncing = false;
+});
+follow(chart, flowChart);
+follow(flowChart, chart);
+
 const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtUsd = (v) => (v >= 1e6 ? fmt(v / 1e6, 2) + ' mi' : fmt(v / 1e3, 0) + ' mil');
 const barTime = (c) => (tf === '1d' ? toDay(c.openTime) : toTime(c.openTime));
 const cBar = (c) => ({ time: barTime(c), open: c.open, high: c.high, low: c.low, close: c.close });
 const vBar = (c) => ({ time: barTime(c), value: c.volume, color: (c.close >= c.open ? UP : DOWN) + '80' });
+const delta = (c) => 2 * c.takerBuyVolume - c.volume; // compra agressora menos venda agressora
+const dBar = (c) => ({ time: barTime(c), value: delta(c), color: (delta(c) >= 0 ? UP : DOWN) + 'c0' });
 
 function showStats(c) {
   if (!c) return;
@@ -113,6 +186,9 @@ function showStats(c) {
   const buy = c.volume ? (c.takerBuyVolume / c.volume) * 100 : 50;
   $('buy').textContent = fmt(buy, 1) + '%';
   $('buybar').style.width = buy + '%';
+  const d = delta(c);
+  $('delta').textContent = (d >= 0 ? '+' : '') + fmt(d, 3);
+  $('delta').className = d >= 0 ? 'up' : 'down';
 }
 
 function showPrice(p) {
@@ -136,13 +212,26 @@ async function load() {
     if (seq !== loadSeq) return;
     $('empty').style.display = rows.length ? 'none' : 'grid';
     chart.timeScale().applyOptions({ timeVisible: tf !== '1d' });
+    flowChart.timeScale().applyOptions({ timeVisible: tf !== '1d' });
     candles.setData(rows.map(cBar));
     volume.setData(rows.map(vBar));
+    // Saldo por candle e saldo acumulado (do primeiro candle da tela ate cada um).
+    let cum = 0;
+    cumBefore = 0;
+    const acumulado = rows.map((c, i) => {
+      if (i === rows.length - 1) cumBefore = cum;
+      cum += delta(c);
+      return { time: barTime(c), value: cum };
+    });
+    deltaBars.setData(rows.map(dBar));
+    cvdLine.setData(acumulado);
     lastBar = rows.at(-1) || null;
+    firstOpenTime = rows.length ? rows[0].openTime : null;
     if (lastBar) { showStats(lastBar); showPrice(lastBar.close); }
     // Poucas barras (ex.: 30 candles de 1d) ficariam espremidas na direita: ajusta a largura.
     if (rows.length * 6 < chart.timeScale().width()) chart.timeScale().fitContent();
     else chart.timeScale().scrollToRealTime();
+    drawMarkers();
   } finally {
     if (seq === loadSeq) {
       loading = false;
@@ -160,8 +249,12 @@ function putBar(c) {
   if (lastBar) {
     if (c.openTime < lastBar.openTime) return false;
     if (c.openTime === lastBar.openTime && c.trades < lastBar.trades) return false;
+    // Candle novo: o saldo do anterior, ja definitivo, entra no acumulado.
+    if (c.openTime > lastBar.openTime) cumBefore += delta(lastBar);
   }
-  candles.update(cBar(c)); volume.update(vBar(c)); lastBar = c;
+  candles.update(cBar(c)); volume.update(vBar(c));
+  deltaBars.update(dBar(c)); cvdLine.update({ time: barTime(c), value: cumBefore + delta(c) });
+  lastBar = c;
   return true;
 }
 
@@ -203,6 +296,92 @@ function onStatus(s) {
 }
 let wasFilling = false;
 
+// ---------- ordens grandes (fase 2) ----------
+// Lista ao lado e setas no grafico: seta para cima embaixo do candle = compra agressora;
+// seta para baixo em cima do candle = venda agressora. O texto e a soma do candle.
+let bigMin = Number(localStorage.getItem('bigMin')) || 100000;
+let bigOrders = []; // da mais recente para a mais antiga
+let bigTimer = null;
+
+function drawMarkers() {
+  if (firstOpenTime === null || !lastBar) { candles.setMarkers([]); return; }
+  const span = TF_MS[tf];
+  const porCandle = new Map();
+  for (const o of bigOrders) {
+    if (o.time < firstOpenTime || o.time >= lastBar.openTime + span) continue;
+    const t = Math.floor(o.time / span) * span;
+    let m = porCandle.get(t);
+    if (!m) porCandle.set(t, m = { buy: 0, buyN: 0, sell: 0, sellN: 0 });
+    if (o.takerBuy) { m.buy += o.quote; m.buyN += 1; } else { m.sell += o.quote; m.sellN += 1; }
+  }
+  const marks = [];
+  for (const [t, m] of [...porCandle].sort((a, b) => a[0] - b[0])) {
+    const time = barTime({ openTime: t });
+    if (m.sellN) marks.push({ time, position: 'aboveBar', color: DOWN, shape: 'arrowDown', v: m.sell, n: m.sellN });
+    if (m.buyN) marks.push({ time, position: 'belowBar', color: UP, shape: 'arrowUp', v: m.buy, n: m.buyN });
+  }
+  // Toda ordem grande ganha seta, mas so as 12 maiores somas da tela ganham o valor escrito:
+  // numa queda forte ha dezenas por minuto e os textos se cobririam.
+  const comTexto = new Set([...marks].sort((a, b) => b.v - a.v).slice(0, 12));
+  candles.setMarkers(marks.map((m) => ({
+    time: m.time, position: m.position, color: m.color, shape: m.shape,
+    text: comTexto.has(m) ? (m.n > 1 ? `${m.n}× ` : '') + fmtUsd(m.v) : '',
+  })));
+}
+
+function renderBig() {
+  const el = $('biglist');
+  el.textContent = '';
+  if (!bigOrders.length) {
+    const d = document.createElement('div');
+    d.className = 'none';
+    d.textContent = 'Nenhuma ordem desse tamanho gravada ainda.';
+    el.appendChild(d);
+  }
+  for (const o of bigOrders.slice(0, 120)) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const hora = document.createElement('small');
+    hora.textContent = new Date(o.time).toLocaleTimeString('pt-BR');
+    const valor = document.createElement('b');
+    valor.className = o.takerBuy ? 'up' : 'down';
+    valor.textContent = (o.takerBuy ? '▲ compra ' : '▼ venda ') + fmtUsd(o.quote);
+    const det = document.createElement('small');
+    det.textContent = fmt(o.qty, 3) + ' BTC';
+    row.title = o.prints > 1
+      ? `Varreu ${o.prints} preços, de ${fmt(o.priceFirst)} a ${fmt(o.priceLast)}`
+      : `Em um preço só: ${fmt(o.priceFirst)}`;
+    row.append(hora, valor, det);
+    el.appendChild(row);
+  }
+  drawMarkers();
+}
+
+async function loadBig() {
+  try {
+    const res = await fetch(`/api/big?min=${bigMin}&limit=500`);
+    bigOrders = res.ok ? await res.json() : [];
+  } catch {
+    bigOrders = [];
+  }
+  renderBig();
+}
+
+function onBig(o) {
+  if (o.quote < bigMin || bigOrders.some((x) => x.firstId === o.firstId)) return;
+  bigOrders.unshift(o);
+  if (bigOrders.length > 500) bigOrders.length = 500;
+  if (!bigTimer) bigTimer = setTimeout(() => { bigTimer = null; renderBig(); }, 500);
+}
+
+$('bigmin').value = String(bigMin);
+if ($('bigmin').value !== String(bigMin)) { bigMin = 100000; $('bigmin').value = '100000'; }
+$('bigmin').onchange = () => {
+  bigMin = Number($('bigmin').value);
+  localStorage.setItem('bigMin', String(bigMin));
+  loadBig();
+};
+
 function buildTfs() {
   $('tfs').innerHTML = '';
   for (const k of Object.keys(TF_MS)) {
@@ -221,10 +400,12 @@ function connect() {
   const es = new EventSource('/api/stream');
   es.addEventListener('candle', (e) => onCandle(JSON.parse(e.data)));
   es.addEventListener('status', (e) => onStatus(JSON.parse(e.data)));
+  es.addEventListener('big', (e) => onBig(JSON.parse(e.data)));
   es.onopen = () => {
     if (!dropped) return;
     dropped = false;
     load();
+    loadBig();
   };
   es.onerror = () => {
     dropped = true;
@@ -241,6 +422,7 @@ async function init() {
   onStatus(info);
   connect();    // liga o ao vivo antes da carga: o que chegar durante ela fica na fila
   await load();
+  loadBig();
 }
 init();
 </script>

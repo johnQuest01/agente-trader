@@ -119,8 +119,8 @@ Pendências conhecidas (não bloqueiam a fase 2):
 
 ## Fase 2 — fluxo e métricas (em andamento)
 
-Pronto e testado em 14/11/2026 (Windows 10, Node 22.20): a base de dados. Faltam o painel
-no gráfico e o livro de ofertas.
+Pronto e testado em 14/11/2026 (Windows 10, Node 22.20): a base de dados e a tela. Falta
+o livro de ofertas.
 
 O que existe:
 - `src/trades.js` — coletor de negócios agregados (aggTrades) em conexão própria, separada
@@ -133,6 +133,12 @@ O que existe:
 - `/api/flow?tf=&limit=&to=` (fluxo nos mesmos tempos gráficos dos candles) e
   `/api/big?min=&limit=&to=` (ordens grandes); eventos `flow` e `big` no `/api/stream`.
 - `scripts/validar.js`, seção 5: confere tudo isso.
+- `public/index.html`: painel embaixo do gráfico com o saldo de agressão por candle (barras)
+  e o saldo acumulado na tela (linha), com o tempo sincronizado com o gráfico de cima; lista
+  de ordens grandes ao lado, com filtro de valor mínimo, e setas nos candles (para cima =
+  compra agressora, para baixo = venda). O saldo do painel sai do próprio candle
+  (saldo = 2 × agressão compradora − volume), então vale para todo o histórico, e não só
+  para o período em que os negócios foram gravados.
 
 Regras (não desfazer):
 - **O banco não tem buraco de negócios sem que isso fique marcado.** O id do negócio
@@ -157,6 +163,8 @@ queda da conexão ao vivo de candles e de negócios ao mesmo tempo (simulada); e
 casos os minutos completos bateram exatamente com os candles, a amostra de 3.000 negócios
 crus bateu com a Binance e todas as ordens grandes conferiram com o recálculo.
 
-Falta na fase 2: painel de fluxo e marcação das ordens grandes no gráfico; livro de ofertas
-gravado ao vivo; rodar vários dias para conferir a limpeza dos negócios antigos e o tamanho
-real do banco.
+A tela foi conferida pelos dados (saldo e acumulado iguais ao cálculo feito a partir da API,
+gráficos sincronizados, setas e lista de acordo com `/api/big`), não por alguém olhando.
+
+Falta na fase 2: livro de ofertas gravado ao vivo; rodar vários dias para conferir a
+limpeza dos negócios antigos e o tamanho real do banco; o Bruno olhar a tela nova.

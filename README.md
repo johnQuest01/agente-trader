@@ -54,6 +54,9 @@ O `npm start` tambem grava os negocios (aggTrades) e calcula:
 - `http://localhost:3333/api/big?min=100000&limit=50` - ordens agressoras grandes (uma ordem
   que varre varios precos aparece somada em uma linha).
 
+Na tela: embaixo do grafico, o saldo de agressao de cada candle (barras) e o acumulado
+(linha); ao lado, a lista de ordens grandes, que tambem aparecem como setas nos candles.
+
 Os negocios crus ocupam de 50 MB (dia medio) a 250 MB (dia muito agitado) por dia e sao
 apagados depois de 7 dias; o fluxo por minuto e as ordens grandes ficam para sempre. `TRADES=0 npm start` desliga essa parte.
 
