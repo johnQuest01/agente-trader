@@ -41,8 +41,9 @@ export function startServer({ db, symbol, port, getStatus }) {
         const limit = Math.max(1, Math.min(5000, Number(url.searchParams.get('limit')) || 1000));
         const last = db.lastOpenTime(symbol);
         if (last === null) return json(res, 200, []);
-        const to = Number(url.searchParams.get('to')) || last;
-        const from = Math.floor(to / bucket) * bucket - (limit - 1) * bucket;
+        // `to` fora do que existe no banco e trazido para dentro, em vez de devolver vazio.
+        const to = Math.min(Number(url.searchParams.get('to')) || last, last);
+        const from = Math.max(Math.floor(to / bucket) * bucket - (limit - 1) * bucket, db.firstOpenTime(symbol));
         const rows = db.range(symbol, from, to);
         return json(res, 200, bucket === MINUTE ? rows : aggregate(rows, bucket));
       }
@@ -71,6 +72,14 @@ export function startServer({ db, symbol, port, getStatus }) {
   }, 20_000);
   ping.unref();
 
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`A porta ${port} ja esta em uso: provavelmente outro "npm start" esta rodando. Feche-o ou use PORT=outra.`);
+    } else {
+      console.error(`Falha ao abrir o servidor na porta ${port}: ${err.message}`);
+    }
+    process.exit(1);
+  });
   server.listen(port, '127.0.0.1');
 
   const send = (event, data) => {

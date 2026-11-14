@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agente Trader · Laboratório</title>
-<script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
 <style>
   :root {
     --bg: #0d1014; --panel: #151a21; --line: #232a34; --text: #d7dde5; --muted: #7d8896;
@@ -65,13 +65,17 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const tzShift = new Date().getTimezoneOffset() * 60; // mostra o horario local do computador
-const toTime = (ms) => Math.floor(ms / 1000) - tzShift;
+// O grafico trabalha em UTC; para mostrar o horario local do computador deslocamos cada
+// candle pelo fuso vigente NAQUELE instante (assim horario de verao nao desloca o passado).
+const toTime = (ms) => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
+// Candle diario e o dia UTC da Binance (00:00 UTC = 21:00 em Sao Paulo): rotulamos pela
+// data UTC, como a propria Binance faz, em vez de "dia anterior as 21:00".
+const toDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 const UP = '#2ebd85', DOWN = '#f6465d';
 const TF_MS = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3, '1d': 86400e3 };
 
 let tf = localStorage.getItem('tf') || '1m';
-if (!TF_MS[tf]) tf = '1m';
+if (!TF_MS[tf]) { tf = '1m'; localStorage.setItem('tf', tf); }
 let lastBar = null;      // ultimo candle do tempo grafico atual
 let lastPrice = null;
 let loading = false;
@@ -87,12 +91,16 @@ const chart = LightweightCharts.createChart($('chart'), {
 const candles = chart.addCandlestickSeries({
   upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN,
 });
-const volume = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '' });
+const volume = chart.addHistogramSeries({
+  priceFormat: { type: 'volume' }, priceScaleId: '',
+  lastValueVisible: false, priceLineVisible: false, // nao poluir a escala de preco
+});
 volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
 const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
-const cBar = (c) => ({ time: toTime(c.openTime), open: c.open, high: c.high, low: c.low, close: c.close });
-const vBar = (c) => ({ time: toTime(c.openTime), value: c.volume, color: (c.close >= c.open ? UP : DOWN) + '80' });
+const barTime = (c) => (tf === '1d' ? toDay(c.openTime) : toTime(c.openTime));
+const cBar = (c) => ({ time: barTime(c), open: c.open, high: c.high, low: c.low, close: c.close });
+const vBar = (c) => ({ time: barTime(c), value: c.volume, color: (c.close >= c.open ? UP : DOWN) + '80' });
 
 function showStats(c) {
   if (!c) return;
@@ -115,14 +123,20 @@ function showPrice(p) {
 
 async function load() {
   loading = true;
+  clearTimeout(tailTimer); tailTimer = null; // atualizacao pendente do tempo grafico anterior
   try {
-    const rows = await (await fetch(`/api/candles?tf=${tf}&limit=1500`)).json();
+    const asked = tf;
+    const rows = await (await fetch(`/api/candles?tf=${asked}&limit=1500`)).json();
+    if (asked !== tf) return; // usuario trocou de novo enquanto carregava
     $('empty').style.display = rows.length ? 'none' : 'grid';
+    chart.timeScale().applyOptions({ timeVisible: tf !== '1d' });
     candles.setData(rows.map(cBar));
     volume.setData(rows.map(vBar));
     lastBar = rows.at(-1) || null;
     if (lastBar) { showStats(lastBar); showPrice(lastBar.close); }
-    chart.timeScale().scrollToRealTime();
+    // Poucas barras (ex.: 30 candles de 1d) ficariam espremidas na direita: ajusta a largura.
+    if (rows.length * 6 < chart.timeScale().width()) chart.timeScale().fitContent();
+    else chart.timeScale().scrollToRealTime();
   } finally {
     loading = false;
   }
@@ -188,6 +202,9 @@ async function init() {
   es.addEventListener('candle', (e) => onCandle(JSON.parse(e.data)));
   es.addEventListener('status', (e) => onStatus(JSON.parse(e.data)));
   es.onerror = () => { $('dot').className = 'dot'; $('st').textContent = 'servidor parado'; };
+  // Se o SSE caiu e voltou, candles podem ter ficado de fora: recarrega o grafico.
+  let firstOpen = true;
+  es.onopen = () => { if (firstOpen) { firstOpen = false; return; } load(); };
 }
 init();
 </script>

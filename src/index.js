@@ -27,20 +27,25 @@ const app = startServer({ db, symbol: SYMBOL, port: PORT, getStatus: () => ({ ..
 log(`grafico em http://localhost:${PORT}  (par: ${SYMBOL})`);
 
 let filling = null;
+let retryTimer = null;
 async function fillGaps() {
   if (filling) return filling;
+  clearTimeout(retryTimer);
+  retryTimer = null;
   status.backfilling = true;
   app.broadcastStatus();
   filling = (async () => {
     try {
       const n = await backfill(db, SYMBOL, BACKFILL_DAYS, log);
       log(`historico em dia: ${n} candles baixados, ${db.count(SYMBOL)} no banco`);
+      status.backfilling = false;
     } catch (err) {
       log(`falha ao baixar historico: ${err.message}`);
       log('confira a internet; tento de novo em 30s');
-      setTimeout(fillGaps, 30_000).unref();
+      // Continua "baixando historico" na tela: o buraco ainda existe ate o retry ter sucesso.
+      retryTimer = setTimeout(fillGaps, 30_000);
+      retryTimer.unref();
     } finally {
-      status.backfilling = false;
       filling = null;
       app.broadcastStatus();
     }
@@ -59,7 +64,14 @@ const stop = streamKlines(SYMBOL, {
     app.broadcastStatus();
   },
   onCandle: (candle) => {
-    db.upsert(candle);
+    // Um erro aqui (ex.: banco travado por outro processo) nao pode derrubar o coletor:
+    // o candle vem de novo no proximo segundo e o backfill da reconexao tapa qualquer falha.
+    try {
+      db.upsert(candle);
+    } catch (err) {
+      log(`falha ao gravar candle ${new Date(candle.openTime).toISOString().slice(11, 16)}: ${err.message}`);
+      return;
+    }
     app.broadcastCandle(candle);
   },
 });

@@ -5,7 +5,9 @@ import { dirname } from 'node:path';
 export async function openDb(file) {
   const { DatabaseSync } = await import('node:sqlite');
   mkdirSync(dirname(file), { recursive: true });
-  const db = new DatabaseSync(file);
+  // timeout: se outro processo (ex.: scripts/validar.js ou uma segunda instancia) estiver com o
+  // arquivo travado, espera ate 5 s em vez de falhar na hora com "database is locked".
+  const db = new DatabaseSync(file, { timeout: 5000 });
 
   db.exec(`
     PRAGMA journal_mode = WAL;
