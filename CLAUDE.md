@@ -27,7 +27,8 @@ operação — não taxa de acerto.
 3. Modo replay: reproduzir um dia passado candle a candle; registrar a previsão ANTES
    de revelar o resultado (FEITO e testado em 14/11/2026 — ver "Fase 3" abaixo)
 4. Tabela de eventos/notícias com horário exato, ligada ao gráfico (estudo de eventos:
-   reação em 1min, 5min, 1h, 1d, 1 semana)
+   reação em 1min, 5min, 1h, 1d, 1 semana) (FEITO e testado em 14/11/2026, com entrada
+   manual e importação; fonte automática ainda não escolhida — ver "Fase 4" abaixo)
 5. Agente conversando com o Bruno + ordens no Demo Mode
    (`https://demo-api.binance.com`), com limites de risco fixos em código que a IA
    não altera, e registro de toda decisão
@@ -235,3 +236,52 @@ conferências de ponta a ponta (nenhum candle depois do ponto atual em resposta 
 três operações com saída e resultado iguais a uma simulação independente; recusas; sessão
 disfarçada revelando data e preço reais só no fim). A tela foi exercitada pelo navegador
 automatizado; o Bruno ainda não usou.
+
+## Fase 4 — eventos e notícias
+
+Pronto e testado em 14/11/2026 (Windows 10, Node 22.20). Tela em
+http://localhost:3333/eventos (há links nas outras telas).
+
+O que existe:
+- `src/events.js` — tabela de eventos, cálculo da reação e as rotas `/api/events...`.
+- `src/http.js` — leitura de JSON das rotas que recebem dados (usada também pelo replay).
+- `public/eventos.html` — a tela: tabela com a reação em cada janela, gráfico em volta do
+  evento escolhido, formulário, importação de várias linhas, movimento típico e média por tipo.
+- Tabela `events` em `data/market.db`. Na tela ao vivo, cada evento aparece como um quadrado
+  amarelo no candle em que aconteceu.
+- `scripts/testar-eventos.js` — 16 casos das contas, com candles montados à mão. Rodar
+  depois de mexer em `src/events.js`.
+
+Regras (não desfazer):
+- **A reação é medida com os candles de 1 minuto:** preço de referência = fechamento do
+  último minuto que terminou antes do evento; reação em N minutos = até o fechamento do
+  N-ésimo minuto a partir do minuto do evento. A precisão é de um minuto, não de segundos.
+- **Janela que ainda não terminou não tem número** ("ainda não passou"); janela com mais de
+  2% dos minutos ausentes também não ("faltam candles").
+- **Toda reação vem ao lado do movimento típico daquela janela** (mediana do tamanho da
+  variação em qualquer horário, em todo o histórico). Sem essa régua, qualquer balanço
+  normal parece efeito do evento.
+- **A média por tipo com menos de 20 eventos aparece em cinza:** não prova nada.
+- Evento repetido (mesmo horário e título) não é gravado de novo.
+
+Limites conhecidos:
+- **Não há fonte automática.** Os eventos entram pelo formulário ou por importação de
+  linhas (`data e hora; título; tipo; importância; fonte; anotação`). Qual fonte automática
+  usar (calendário econômico, notícias) é decisão do Bruno e ainda não foi tomada.
+- Com 30 dias de histórico, a janela de 1 semana quase não tem amostra para o movimento
+  típico, e a de 1 dia tem só 30.
+- A hora digitada é a do computador; o banco guarda em UTC.
+- Reação medida não é causa provada: outra coisa pode ter acontecido no mesmo minuto.
+
+Verificado: os 16 casos das contas; e, num servidor de teste com cópia do banco, 20
+conferências de ponta a ponta (a reação de três eventos igual a uma conta independente nas
+janelas completas; evento antes do histórico; importação com linha ruim; duplicado;
+apagar). A tela foi exercitada pelo navegador automatizado; o Bruno ainda não usou.
+
+## Fase 5 — o que falta decidir antes de começar
+
+A fase 5 (agente conversando com o Bruno e ordens só no Demo Mode) depende de decisões dele:
+- os limites de risco fixos em código (perda máxima por operação e por dia, tamanho máximo
+  da posição, quantas operações por dia);
+- as chaves de API do Demo Mode da Binance, que ele mesmo cria e coloca no arquivo `.env`
+  (já ignorado pelo git). Nunca usar chave da conta real neste projeto.

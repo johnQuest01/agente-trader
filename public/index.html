@@ -77,6 +77,7 @@
   <div class="price" id="price">—</div>
   <div class="tfs" id="tfs"></div>
   <a href="/replay" style="color: var(--accent); text-decoration: none;">Replay →</a>
+  <a href="/eventos" style="color: var(--accent); text-decoration: none;">Eventos →</a>
   <div class="stats">
     <div class="stat"><span>Variação do candle</span><b id="chg">—</b></div>
     <div class="stat"><span>Volume do candle</span><b id="vol">—</b></div>
@@ -315,6 +316,7 @@ let wasFilling = false;
 let bigMin = Number(localStorage.getItem('bigMin')) || 100000;
 let bigOrders = []; // da mais recente para a mais antiga
 let bigTimer = null;
+let eventList = []; // eventos registrados na tela de eventos (fase 4)
 
 function drawMarkers() {
   if (firstOpenTime === null || !lastBar) { candles.setMarkers([]); return; }
@@ -328,18 +330,26 @@ function drawMarkers() {
     if (o.takerBuy) { m.buy += o.quote; m.buyN += 1; } else { m.sell += o.quote; m.sellN += 1; }
   }
   const marks = [];
-  for (const [t, m] of [...porCandle].sort((a, b) => a[0] - b[0])) {
+  for (const [t, m] of porCandle) {
     const time = barTime({ openTime: t });
-    if (m.sellN) marks.push({ time, position: 'aboveBar', color: DOWN, shape: 'arrowDown', v: m.sell, n: m.sellN });
-    if (m.buyN) marks.push({ time, position: 'belowBar', color: UP, shape: 'arrowUp', v: m.buy, n: m.buyN });
+    if (m.sellN) marks.push({ t, time, position: 'aboveBar', color: DOWN, shape: 'arrowDown', v: m.sell, n: m.sellN });
+    if (m.buyN) marks.push({ t, time, position: 'belowBar', color: UP, shape: 'arrowUp', v: m.buy, n: m.buyN });
   }
   // Toda ordem grande ganha seta, mas so as 12 maiores somas da tela ganham o valor escrito:
   // numa queda forte ha dezenas por minuto e os textos se cobririam.
   const comTexto = new Set([...marks].sort((a, b) => b.v - a.v).slice(0, 12));
-  candles.setMarkers(marks.map((m) => ({
-    time: m.time, position: m.position, color: m.color, shape: m.shape,
+  const out = marks.map((m) => ({
+    t: m.t, time: m.time, position: m.position, color: m.color, shape: m.shape,
     text: comTexto.has(m) ? (m.n > 1 ? `${m.n}× ` : '') + fmtUsd(m.v) : '',
-  })));
+  }));
+  // Eventos registrados (fase 4): um quadrado amarelo no candle em que aconteceram.
+  for (const e of eventList) {
+    if (e.time < firstOpenTime || e.time >= lastBar.openTime + span) continue;
+    const t = Math.floor(e.time / span) * span;
+    out.push({ t, time: barTime({ openTime: t }), position: 'aboveBar', color: ACCENT, shape: 'square', text: e.title.slice(0, 22) });
+  }
+  // O grafico exige os marcadores em ordem de tempo.
+  candles.setMarkers(out.sort((a, b) => a.t - b.t).map(({ t, ...m }) => m));
 }
 
 function renderBig() {
@@ -467,6 +477,8 @@ async function init() {
   await load();
   loadBig();
   fetch('/api/book').then((r) => (r.ok ? r.json() : null)).then(renderBook).catch(() => {});
+  fetch('/api/events').then((r) => (r.ok ? r.json() : null))
+    .then((d) => { eventList = d ? d.events : []; drawMarkers(); }).catch(() => {});
 }
 init();
 </script>

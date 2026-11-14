@@ -150,6 +150,21 @@ export async function openDb(file) {
       exit_kind  TEXT                  -- 'stop', 'target', 'time', 'manual' ou 'end'
     );
     CREATE INDEX IF NOT EXISTS replay_trades_session ON replay_trades (session_id, id);
+
+    -- Fase 4. Eventos e noticias, com o horario exato em que aconteceram.
+    CREATE TABLE IF NOT EXISTS events (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT    NOT NULL,
+      time       INTEGER NOT NULL,  -- horario exato do evento, em ms (UTC)
+      title      TEXT    NOT NULL,
+      kind       TEXT    NOT NULL,  -- tipo, em texto livre (ex.: macro, cripto, regulacao)
+      importance INTEGER NOT NULL,  -- 1 (baixa), 2 (media) ou 3 (alta)
+      source     TEXT,              -- de onde veio (nome ou link)
+      note       TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE (symbol, time, title)
+    );
+    CREATE INDEX IF NOT EXISTS events_time ON events (symbol, time);
   `);
 
   // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
@@ -287,6 +302,28 @@ export async function openDb(file) {
     UPDATE replay_trades SET bars = ?, worst = ?, best = ?, exit_time = ?, exit = ?, exit_kind = ? WHERE id = ?
   `);
 
+  // ---------- Fase 4: eventos ----------
+  const eventInsStmt = db.prepare(`
+    INSERT OR IGNORE INTO events (symbol, time, title, kind, importance, source, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const eventListStmt = db.prepare(`
+    SELECT id, time, title, kind, importance, source, note, created_at AS createdAt
+    FROM events WHERE symbol = ? AND time >= ? AND time <= ? ORDER BY time DESC LIMIT 2000
+  `);
+  const eventGetStmt = db.prepare('SELECT id, time, title, kind, importance, source, note FROM events WHERE id = ? AND symbol = ?');
+  const eventDelStmt = db.prepare('DELETE FROM events WHERE id = ? AND symbol = ?');
+  const candleAtStmt = db.prepare(`
+    SELECT open_time AS openTime, open, high, low, close, volume, closed FROM candles WHERE symbol = ? AND open_time = ?
+  `);
+  // Resumo de um trecho de candles de 1m: quantos sao, a maior maxima, a menor minima e o volume.
+  const windowStmt = db.prepare(`
+    SELECT COUNT(*) AS n, MAX(high) AS high, MIN(low) AS low, COALESCE(SUM(volume), 0) AS volume
+    FROM candles WHERE symbol = ? AND open_time >= ? AND open_time < ?
+  `);
+  const closesStmt = db.prepare('SELECT open_time AS openTime, close FROM candles WHERE symbol = ? AND closed = 1 ORDER BY open_time');
+  const lastClosedStmt = db.prepare('SELECT MAX(open_time) AS t FROM candles WHERE symbol = ? AND closed = 1');
+
   const tx = (fn) => {
     db.exec('BEGIN');
     try {
@@ -363,6 +400,18 @@ export async function openDb(file) {
     replayUpdateTrade: (t) => rtradeUpdStmt.run(
       t.bars, t.worst, t.best, t.exitTime ?? null, t.exit ?? null, t.exitKind ?? null, t.id,
     ),
+
+    // Devolve true se gravou; false se ja existia um evento igual (mesmo horario e titulo).
+    eventAdd: (e) => Number(eventInsStmt.run(
+      e.symbol, e.time, e.title, e.kind, e.importance, e.source ?? null, e.note ?? null, e.createdAt,
+    ).changes) > 0,
+    eventList: (symbol, from = 0, to = Number.MAX_SAFE_INTEGER) => eventListStmt.all(symbol, from, to),
+    eventGet: (symbol, id) => eventGetStmt.get(id, symbol) ?? null,
+    eventDelete: (symbol, id) => Number(eventDelStmt.run(id, symbol).changes) > 0,
+    candleAt: (symbol, openTime) => candleAtStmt.get(symbol, openTime) ?? null,
+    windowStats: (symbol, from, to) => windowStmt.get(symbol, from, to),
+    closes: (symbol) => closesStmt.all(symbol),
+    lastClosedTime: (symbol) => lastClosedStmt.get(symbol).t ?? null,
 
     close: () => db.close(),
   };

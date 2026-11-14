@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eventos · Agente Trader</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d1014; --panel: #151a21; --line: #232a34; --text: #d7dde5; --muted: #7d8896;
+    --up: #2ebd85; --down: #f6465d; --accent: #f0b90b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header b.title { font-size: 16px; }
+  a { color: var(--accent); text-decoration: none; }
+  button, select, input, textarea {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.main { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
+  #msg { margin-left: auto; font-size: 12px; max-width: 50%; text-align: right; }
+  #main { flex: 1; min-height: 0; display: flex; }
+  #left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #chartbar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  #chart { flex: 2; min-height: 0; }
+  #tablewrap { flex: 3; min-height: 0; overflow: auto; border-top: 1px solid var(--line); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #1a2029; text-align: right; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+  td.ev { white-space: normal; min-width: 180px; }
+  td small { color: var(--muted); display: block; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #12171d; }
+  tbody tr.sel { background: #1a212b; }
+  td button { padding: 0 7px; color: var(--muted); }
+  aside { width: 340px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
+  section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  section h3 { margin: 0 0 8px; font-size: 13px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .row label { color: var(--muted); font-size: 12px; min-width: 76px; }
+  .row input, .row select { flex: 1; min-width: 0; }
+  textarea { width: 100%; height: 60px; resize: vertical; margin-top: 6px; font-size: 12px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 12px; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .grid span { color: var(--muted); }
+  #resumo table { font-size: 12px; }
+  #resumo th, #resumo td { padding: 4px 6px; }
+</style>
+</head>
+<body>
+<header>
+  <b class="title">Eventos</b>
+  <a href="/">← ao vivo</a>
+  <a href="/replay">Replay →</a>
+  <div id="msg"></div>
+</header>
+<div id="main">
+  <div id="left">
+    <div id="chartbar">
+      <span id="sel" class="muted">Clique num evento da tabela para ver o gráfico em volta dele.</span>
+      <select id="tf" style="margin-left:auto" title="Tempo gráfico do gráfico acima">
+        <option>1m</option><option selected>5m</option><option>15m</option><option>1h</option>
+      </select>
+    </div>
+    <div id="chart"></div>
+    <div id="tablewrap">
+      <table>
+        <thead><tr id="head"></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+  <aside>
+    <section>
+      <h3>Registrar evento</h3>
+      <div class="row"><label for="quando">Quando</label><input type="datetime-local" id="quando" step="1"></div>
+      <div class="row"><label for="titulo">Título</label><input id="titulo" maxlength="200" placeholder="o que aconteceu"></div>
+      <div class="row"><label for="tipo">Tipo</label><input id="tipo" list="tipos" maxlength="40" placeholder="macro, cripto…"><datalist id="tipos"></datalist></div>
+      <div class="row"><label for="imp">Importância</label><select id="imp"><option value="1">baixa</option><option value="2" selected>média</option><option value="3">alta</option></select></div>
+      <div class="row"><label for="fonte">Fonte</label><input id="fonte" maxlength="300" placeholder="de onde veio (opcional)"></div>
+      <textarea id="nota" maxlength="1000" placeholder="Anotação (opcional)"></textarea>
+      <div class="row"><button id="salvar" class="main">Registrar evento</button></div>
+      <div class="hint">Horário do computador, com segundos. A reação é medida com candles de 1 minuto: do fechamento do minuto anterior ao evento até o fim de cada janela.</div>
+    </section>
+    <section>
+      <h3>Importar vários</h3>
+      <textarea id="csv" placeholder="Uma linha por evento:&#10;14/11/2026 18:30;Decisão de juros;macro;3;Banco Central;anotação"></textarea>
+      <div class="row"><button id="importar">Importar</button></div>
+      <div class="hint">Campos separados por ponto e vírgula: data e hora; título; tipo; importância (1 a 3); fonte; anotação. Só os dois primeiros são obrigatórios.</div>
+    </section>
+    <section>
+      <h3>Movimento típico do preço</h3>
+      <div class="grid" id="tipico"></div>
+      <div class="hint">Tamanho da variação em qualquer horário, medido em todo o histórico. Serve de régua: uma reação de 1× é o balanço de sempre.</div>
+    </section>
+    <section id="resumo">
+      <h3>Média por tipo de evento</h3>
+      <div id="resumotab"></div>
+      <div class="hint">Com menos de 20 eventos do mesmo tipo, a média não prova nada: aparece em cinza.</div>
+    </section>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const toTime = (ms) => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
+const UP = '#2ebd85', DOWN = '#f6465d', ACCENT = '#f0b90b';
+const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (n, d = 2) => (n >= 0 ? '+' : '') + fmt(n, d) + '%';
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+
+let D = null;        // o que o servidor devolveu: eventos, movimento tipico e resumo
+let selected = null; // id do evento mostrado no grafico
+
+const chart = LightweightCharts.createChart($('chart'), {
+  autoSize: true,
+  layout: { background: { color: '#0d1014' }, textColor: '#9aa4b1' },
+  grid: { vertLines: { color: '#1a2029' }, horzLines: { color: '#1a2029' } },
+  rightPriceScale: { borderColor: '#232a34' },
+  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+});
+const candles = chart.addCandlestickSeries({ upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN });
+const volume = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '', lastValueVisible: false, priceLineVisible: false });
+volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+let refLine = null;
+
+const say = (text, bad) => { $('msg').textContent = text || ''; $('msg').className = bad ? 'down' : 'muted'; };
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `erro ${res.status}`);
+  return data;
+}
+
+// Quantas vezes a reacao foi maior que o movimento tipico daquela janela (so com amostra suficiente).
+function vezes(i, retPct) {
+  const t = D.typical[i];
+  return t.samples >= 30 && t.medianAbsPct > 0 ? Math.abs(retPct) / t.medianAbsPct : null;
+}
+
+function render() {
+  const head = $('head');
+  head.textContent = '';
+  for (const t of ['Quando', 'Evento', ...D.horizons.map((h) => h.label), '']) head.appendChild(el('th', t));
+  const rows = $('rows');
+  rows.textContent = '';
+  if (!D.events.length) {
+    const td = el('td', 'Nenhum evento registrado ainda. Use o formulário ao lado.', 'muted');
+    td.colSpan = D.horizons.length + 3; td.style.textAlign = 'left';
+    rows.appendChild(el('tr')).appendChild(td);
+  }
+  for (const e of D.events) {
+    const tr = el('tr', undefined, e.id === selected ? 'sel' : '');
+    tr.appendChild(el('td', new Date(e.time).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' })));
+    const ev = el('td', undefined, 'ev');
+    ev.appendChild(el('b', e.title));
+    ev.appendChild(el('small', `${e.kind} · importância ${['baixa', 'média', 'alta'][e.importance - 1]}${e.source ? ' · ' + e.source : ''}`));
+    if (e.note) ev.appendChild(el('small', e.note));
+    tr.appendChild(ev);
+    e.reaction.horizons.forEach((h, i) => {
+      if (h.status !== 'ok') {
+        const td = el('td', h.status === 'ainda nao passou' ? '…' : '—', 'muted');
+        td.title = h.status;
+        tr.appendChild(td);
+        return;
+      }
+      const td = el('td', pct(h.retPct), h.retPct >= 0 ? 'up' : 'down');
+      const x = vezes(i, h.retPct);
+      td.appendChild(el('small', x === null ? ' ' : `${fmt(x, 1)}× o típico`));
+      td.title = `No fim da janela: ${pct(h.retPct, 3)}. Chegou a ${pct(h.maxUpPct, 3)} e a ${pct(h.maxDownPct, 3)}.`
+        + (h.volumeRatio === null ? '' : ` Volume: ${fmt(h.volumeRatio, 1)}× o normal.`);
+      tr.appendChild(td);
+    });
+    const del = el('td');
+    const b = el('button', '×'); b.title = 'Apagar este evento';
+    b.onclick = (ev2) => { ev2.stopPropagation(); if (confirm(`Apagar o evento "${e.title}"?`)) change(() => api('/api/events/delete', { id: e.id }), 'Evento apagado.'); };
+    del.appendChild(b);
+    tr.appendChild(del);
+    tr.onclick = () => select(e.id);
+    rows.appendChild(tr);
+  }
+
+  const tip = $('tipico');
+  tip.textContent = '';
+  tip.append(el('span', 'janela'), el('span', 'metade das vezes'), el('span', '1 em cada 10'));
+  D.typical.forEach((t, i) => {
+    tip.append(el('b', D.horizons[i].label));
+    if (t.samples < 30) { tip.append(el('span', 'histórico curto'), el('span', '')); return; }
+    tip.append(el('b', `até ${fmt(t.medianAbsPct, 3)}%`), el('b', `mais de ${fmt(t.p90AbsPct, 3)}%`));
+  });
+
+  const res = $('resumotab');
+  res.textContent = '';
+  if (!D.summary.length) res.appendChild(el('div', 'Sem eventos.', 'muted'));
+  else {
+    const t = el('table');
+    const h = el('tr');
+    for (const x of ['Tipo', ...D.horizons.map((z) => z.label)]) h.appendChild(el('th', x));
+    t.appendChild(el('thead')).appendChild(h);
+    const body = t.appendChild(el('tbody'));
+    for (const k of D.summary) {
+      const tr = el('tr');
+      const nome = el('td', k.kind); nome.appendChild(el('small', `${k.events} evento${k.events > 1 ? 's' : ''}`));
+      tr.appendChild(nome);
+      for (const z of k.horizons) {
+        if (!z.n) { tr.appendChild(el('td', '—', 'muted')); continue; }
+        const td = el('td', pct(z.meanPct), z.n < 20 ? 'muted' : z.meanPct >= 0 ? 'up' : 'down');
+        td.appendChild(el('small', `${z.n} ev. · ${fmt(z.upPct, 0)}% subiram`));
+        td.title = `Média ${pct(z.meanPct, 3)}; mediana ${pct(z.medianPct, 3)}; ${z.n} eventos com a janela completa.`;
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    res.appendChild(t);
+  }
+
+  const tipos = $('tipos');
+  tipos.textContent = '';
+  for (const k of D.summary) { const o = el('option'); o.value = k.kind; tipos.appendChild(o); }
+}
+
+async function select(id) {
+  selected = id;
+  for (const tr of $('rows').children) tr.classList.remove('sel');
+  const e = D.events.find((x) => x.id === id);
+  if (!e) return;
+  const i = D.events.indexOf(e);
+  if ($('rows').children[i]) $('rows').children[i].classList.add('sel');
+  try {
+    const w = await api(`/api/events/window?id=${id}&tf=${$('tf').value}`);
+    if (selected !== id) return; // clicaram em outro enquanto carregava
+    candles.setData(w.candles.map((c) => ({ time: toTime(c.openTime), open: c.open, high: c.high, low: c.low, close: c.close })));
+    volume.setData(w.candles.map((c) => ({ time: toTime(c.openTime), value: c.volume, color: (c.close >= c.open ? UP : DOWN) + '80' })));
+    const has = w.candles.some((c) => c.openTime === w.eventBucket);
+    candles.setMarkers(has ? [{ time: toTime(w.eventBucket), position: 'aboveBar', color: ACCENT, shape: 'arrowDown', text: 'evento' }] : []);
+    if (refLine) { candles.removePriceLine(refLine); refLine = null; }
+    if (e.reaction.refPrice !== null) refLine = candles.createPriceLine({ price: e.reaction.refPrice, color: ACCENT, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'antes do evento' });
+    chart.timeScale().fitContent();
+    $('sel').textContent = `${e.title} · ${new Date(e.time).toLocaleString('pt-BR')}` + (w.candles.length ? '' : ' · sem candles nesse período');
+    $('sel').className = '';
+  } catch (err) {
+    say(err.message, true);
+  }
+}
+
+// Roda uma acao que devolve a lista atualizada.
+async function change(fn, okText) {
+  say('');
+  try {
+    const r = await fn();
+    D = r;
+    render();
+    const erros = (r.errors || []).map((x) => `linha ${x.line}: ${x.error}`).join('; ');
+    if (typeof okText === 'function') say(okText(r) + (erros ? ` Erros: ${erros}` : ''), !!erros);
+    else say(okText || '');
+    return true;
+  } catch (err) {
+    say(err.message, true);
+    return false;
+  }
+}
+
+$('salvar').onclick = async () => {
+  const v = $('quando').value;
+  if (!v) return say('Informe quando o evento aconteceu.', true);
+  const ok = await change(() => api('/api/events', {
+    time: new Date(v).getTime(), title: $('titulo').value, kind: $('tipo').value,
+    importance: $('imp').value, source: $('fonte').value, note: $('nota').value,
+  }), (r) => (r.added ? 'Evento registrado.' : 'Já existia um evento com esse horário e título.'));
+  if (ok) { $('titulo').value = ''; $('nota').value = ''; }
+};
+$('importar').onclick = async () => {
+  const ok = await change(() => api('/api/events/import', { csv: $('csv').value }),
+    (r) => `${r.added} adicionado${r.added === 1 ? '' : 's'}, ${r.duplicates} repetido${r.duplicates === 1 ? '' : 's'}.`);
+  if (ok && !$('msg').classList.contains('down')) $('csv').value = '';
+};
+$('tf').onchange = () => { if (selected !== null) select(selected); };
+
+change(() => api('/api/events'));
+</script>
+</body>
+</html>

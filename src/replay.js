@@ -10,6 +10,7 @@
 // um indice que comeca em 100), para nao dar para reconhecer o dia.
 import { MINUTE, TIMEFRAMES, REPLAY_FEE_PCT } from './config.js';
 import { aggregate } from './aggregate.js';
+import { readJson, isJson } from './http.js';
 
 const DAY = 1440 * MINUTE;
 const iso = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
@@ -272,20 +273,6 @@ export function closeTrade(db, id) {
 }
 
 // ---------- rotas HTTP ----------
-function readJson(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > 100_000) { reject(new Error('corpo grande demais')); req.destroy(); }
-    });
-    req.on('end', () => {
-      try { resolve(body ? JSON.parse(body) : {}); } catch { reject(new Error('JSON invalido')); }
-    });
-    req.on('error', reject);
-  });
-}
-
 // Devolve true se a rota era do replay. Erros de uso (stop do lado errado etc.) saem como 400.
 export async function handleReplay(req, res, url, { db, symbol, json }) {
   if (!url.pathname.startsWith('/api/replay/')) return false;
@@ -300,8 +287,7 @@ export async function handleReplay(req, res, url, { db, symbol, json }) {
       return true;
     }
     if (req.method === 'POST') {
-      // So aceita JSON: assim uma pagina de outro site aberta no navegador nao consegue mandar comandos.
-      if (!String(req.headers['content-type'] || '').startsWith('application/json')) {
+      if (!isJson(req)) {
         json(res, 415, { error: 'envie JSON (content-type: application/json)' });
         return true;
       }

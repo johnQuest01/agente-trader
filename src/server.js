@@ -4,9 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { TIMEFRAMES, MINUTE } from './config.js';
 import { aggregate, aggregateFlow } from './aggregate.js';
 import { handleReplay } from './replay.js';
+import { handleEvents } from './events.js';
 
 const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
 const REPLAY = fileURLToPath(new URL('../public/replay.html', import.meta.url));
+const EVENTOS = fileURLToPath(new URL('../public/eventos.html', import.meta.url));
 
 export function startServer({ db, symbol, port, getStatus }) {
   const clients = new Set();
@@ -33,6 +35,14 @@ export function startServer({ db, symbol, port, getStatus }) {
         return res.end(html);
       }
       if (await handleReplay(req, res, url, { db, symbol, json })) return;
+
+      // Fase 4: tela e rotas dos eventos.
+      if (url.pathname === '/eventos') {
+        const html = await readFile(EVENTOS);
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(html);
+      }
+      if (await handleEvents(req, res, url, { db, symbol, json })) return;
 
       if (url.pathname === '/api/info') {
         return json(res, 200, {

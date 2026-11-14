@@ -4,6 +4,7 @@ Laboratorio local de trading com dados reais da Binance (par BTCUSDT por padrao)
 Fase 1: coletor de candles de 1 minuto em SQLite + grafico no navegador.
 Fase 2: negocios, agressao compradora x vendedora por minuto, ordens grandes e livro de ofertas.
 Fase 3: replay de um periodo passado, com a operacao registrada antes de ver o resultado.
+Fase 4: tabela de eventos com horario exato e a reacao do preco a cada um.
 Leia `CLAUDE.md` para o objetivo, as fases e o estado do projeto.
 
 ## Requisitos
@@ -88,6 +89,20 @@ node scripts/testar-replay.js
 ```
 
 confere as contas do replay (nao precisa do servidor nem da internet).
+
+## Fase 4: eventos e noticias
+
+Abra http://localhost:3333/eventos. Registre o evento com o horario exato (pelo formulario, ou
+varias linhas de uma vez: `data e hora; titulo; tipo; importancia; fonte; anotacao`). A tabela
+mostra a reacao do preco em 1 minuto, 5 minutos, 1 hora, 1 dia e 1 semana, ao lado de quantas
+vezes isso foi maior que o movimento tipico daquela janela, e a media por tipo de evento. Na
+tela ao vivo, cada evento aparece como um quadrado amarelo no candle em que aconteceu.
+
+```bash
+node scripts/testar-eventos.js
+```
+
+confere as contas (nao precisa do servidor nem da internet).
 
 ## Variaveis de ambiente
 
