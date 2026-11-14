@@ -25,7 +25,7 @@ operação — não taxa de acerto.
    ("baleias"), livro de ofertas gravado ao vivo (FEITO e testado em 14/11/2026; falta
    rodar por vários dias — ver "Fase 2" abaixo)
 3. Modo replay: reproduzir um dia passado candle a candle; registrar a previsão ANTES
-   de revelar o resultado
+   de revelar o resultado (FEITO e testado em 14/11/2026 — ver "Fase 3" abaixo)
 4. Tabela de eventos/notícias com horário exato, ligada ao gráfico (estudo de eventos:
    reação em 1min, 5min, 1h, 1d, 1 semana)
 5. Agente conversando com o Bruno + ordens no Demo Mode
@@ -192,3 +192,46 @@ Falta na fase 2: rodar vários dias para conferir a limpeza dos dados antigos, o
 real do banco e as conferências automáticas do livro ao longo do tempo; o Bruno olhar a
 tela nova. O disco do computador tinha 25 GB livres de 447 GB em 14/11/2026: com os
 padrões, a fase 2 ocupa de 0,5 a 2 GB.
+
+## Fase 3 — replay
+
+Pronto e testado em 14/11/2026 (Windows 10, Node 22.20). Tela em
+http://localhost:3333/replay (há um link na tela ao vivo).
+
+O que existe:
+- `src/replay.js` — sessões, operações, contas de resultado e as rotas `/api/replay/...`.
+- `public/replay.html` — a tela: gráfico só com o que já foi revelado, botões de próximo
+  candle (ou barra de espaço), formulário da operação, resultado da sessão.
+- Tabelas `replay_sessions` e `replay_trades` em `data/market.db`.
+- `scripts/testar-replay.js` — 14 casos das contas, com candles montados à mão. Rodar
+  depois de mexer em `src/replay.js`.
+
+Regras (não desfazer):
+- **Quem garante que a operação é registrada antes do resultado é o servidor, não a tela.**
+  A API do replay só devolve candles até o último revelado; o preço de entrada é sempre o
+  fechamento desse candle (a tela informa só lado, stop, alvo, prazo e motivo); o resultado
+  sai só dos candles revelados depois.
+- **Sem stop não há operação.** O projeto mede perda máxima; operação sem perda máxima
+  definida é recusada.
+- **Dentro de um candle vale o pior caso:** se o stop e o alvo foram tocados no mesmo
+  candle, conta como stop; se o candle abriu além do stop, a saída é na abertura.
+- **Resultado líquido de taxas:** `REPLAY_FEE_PCT` = 0,1% por lado, na entrada e na saída.
+- **Ordem do resumo:** resultado líquido, perda máxima, pior operação, expectativa por
+  operação, R médio; a taxa de acerto vem por último, de propósito.
+- **Sessão sorteada é disfarçada:** a data fica oculta e o preço vira um índice que começa
+  em 100, até a sessão acabar, para não dar para reconhecer o dia. No banco ficam sempre
+  os preços reais.
+
+Limites conhecidos:
+- Só há 30 dias de candles para sortear; com pouco histórico os períodos se repetem.
+- Uma operação aberta por vez; o passo é sempre um candle inteiro do tempo gráfico da sessão.
+- Não há modelo de derrapagem (slippage): a entrada é exatamente no fechamento.
+- As porcentagens são somadas como se cada operação usasse o mesmo valor.
+- O replay mostra candles e saldo de agressão; ordens grandes e livro ainda não entram
+  (só existem a partir de 14/11/2026).
+
+Verificado: os 14 casos das contas; e, num servidor de teste com cópia do banco, 35
+conferências de ponta a ponta (nenhum candle depois do ponto atual em resposta alguma;
+três operações com saída e resultado iguais a uma simulação independente; recusas; sessão
+disfarçada revelando data e preço reais só no fim). A tela foi exercitada pelo navegador
+automatizado; o Bruno ainda não usou.

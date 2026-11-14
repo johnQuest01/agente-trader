@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { TIMEFRAMES, MINUTE } from './config.js';
 import { aggregate, aggregateFlow } from './aggregate.js';
+import { handleReplay } from './replay.js';
 
 const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
+const REPLAY = fileURLToPath(new URL('../public/replay.html', import.meta.url));
 
 export function startServer({ db, symbol, port, getStatus }) {
   const clients = new Set();
@@ -23,6 +25,14 @@ export function startServer({ db, symbol, port, getStatus }) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(html);
       }
+
+      // Fase 3: tela e rotas do replay.
+      if (url.pathname === '/replay') {
+        const html = await readFile(REPLAY);
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(html);
+      }
+      if (await handleReplay(req, res, url, { db, symbol, json })) return;
 
       if (url.pathname === '/api/info') {
         return json(res, 200, {

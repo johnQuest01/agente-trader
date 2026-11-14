@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replay · Agente Trader</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d1014; --panel: #151a21; --line: #232a34; --text: #d7dde5; --muted: #7d8896;
+    --up: #2ebd85; --down: #f6465d; --accent: #f0b90b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header b.title { font-size: 16px; }
+  a { color: var(--accent); text-decoration: none; }
+  button, select, input, textarea {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.main { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
+  #msg { margin-left: auto; color: var(--down); font-size: 12px; max-width: 46%; text-align: right; }
+  #main { flex: 1; min-height: 0; display: flex; }
+  #charts { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #chart { flex: 3; min-height: 0; }
+  #flowwrap { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  #flow { flex: 1; min-height: 0; }
+  .cap { padding: 3px 16px; color: var(--muted); font-size: 11px; }
+  .cap i { font-style: normal; color: var(--accent); }
+  aside { width: 320px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
+  section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  section h3 { margin: 0 0 8px; font-size: 13px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .row label { color: var(--muted); font-size: 12px; min-width: 56px; }
+  .row input[type=number], .row input[type=datetime-local] { flex: 1; min-width: 0; }
+  textarea { width: 100%; height: 46px; resize: vertical; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .grid span { color: var(--muted); }
+  .trade { padding: 6px 0; border-top: 1px solid #1a2029; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .trade:first-child { border-top: 0; }
+  .trade small { color: var(--muted); display: block; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  #done { display: none; color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <b class="title">Replay</b>
+  <a href="/">← ao vivo</a>
+  <select id="tf" title="Tempo gráfico da sessão">
+    <option>1m</option><option selected>5m</option><option>15m</option><option>1h</option><option>4h</option>
+  </select>
+  <button id="sortear" class="main" title="Um período qualquer do histórico, com a data e o preço disfarçados">Sortear período</button>
+  <input type="datetime-local" id="inicio" title="Início da sessão, no horário do computador">
+  <button id="escolher">Começar nesse horário</button>
+  <select id="sessoes" title="Sessões já feitas"></select>
+  <div id="msg"></div>
+</header>
+<div id="main">
+  <div id="charts">
+    <div id="chart"></div>
+    <div id="flowwrap">
+      <div class="cap">Saldo de agressão por candle (barras: compra − venda) · <i>linha: saldo acumulado na tela</i></div>
+      <div id="flow"></div>
+    </div>
+  </div>
+  <aside>
+    <section>
+      <h3>Sessão <span id="sid" class="muted"></span></h3>
+      <div class="grid">
+        <span>Candles revelados</span><b id="rev">—</b>
+        <span>Faltam</span><b id="rest">—</b>
+        <span>Último fechamento</span><b id="last">—</b>
+      </div>
+      <div class="row">
+        <button id="n1" class="main">Próximo candle</button>
+        <button id="n5">+5</button>
+        <button id="n20">+20</button>
+      </div>
+      <div class="hint" id="oculto"></div>
+      <div id="done"></div>
+    </section>
+    <section id="form">
+      <h3>Registrar operação</h3>
+      <div class="row">
+        <label><input type="radio" name="lado" value="buy" checked> Compra</label>
+        <label><input type="radio" name="lado" value="sell"> Venda</label>
+      </div>
+      <div class="row"><label for="stop">Stop</label><input type="number" id="stop" step="any" placeholder="preço da perda máxima"></div>
+      <div class="row"><label for="alvo">Alvo</label><input type="number" id="alvo" step="any" placeholder="opcional"></div>
+      <div class="row"><label for="prazo">Prazo</label><input type="number" id="prazo" value="12" min="1" max="1000"><span class="muted">candles</span></div>
+      <textarea id="motivo" placeholder="Por que esta operação? (fica registrado)"></textarea>
+      <div class="row"><button id="registrar" class="main">Registrar antes de revelar</button></div>
+      <div class="hint">A entrada é o fechamento do último candle revelado. Taxa de <span id="taxa"></span>% por lado.</div>
+    </section>
+    <section id="aberta" style="display:none">
+      <h3>Operação aberta</h3>
+      <div class="grid" id="abertagrid"></div>
+      <div class="row"><button id="encerrar">Encerrar no fechamento atual</button></div>
+    </section>
+    <section>
+      <h3>Resultado da sessão</h3>
+      <div class="grid" id="stats"></div>
+    </section>
+    <section>
+      <h3>Operações</h3>
+      <div id="trades"></div>
+    </section>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const toTime = (ms) => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
+const UP = '#2ebd85', DOWN = '#f6465d', ACCENT = '#f0b90b';
+const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (n) => (n >= 0 ? '+' : '') + fmt(n, 3) + '%';
+const cls = (n) => (n >= 0 ? 'up' : 'down');
+
+let S = null;        // a sessao, como o servidor devolveu (so candles ja revelados)
+let drawnId = null;  // sessao desenhada no grafico
+let drawn = 0;       // quantos candles dela ja estao no grafico
+let cum = 0;         // saldo de agressao acumulado ate o ultimo candle desenhado
+let lines = [];      // linhas de entrada, stop e alvo da operacao aberta
+
+const LAYOUT = { background: { color: '#0d1014' }, textColor: '#9aa4b1' };
+const GRID = { vertLines: { color: '#1a2029' }, horzLines: { color: '#1a2029' } };
+const SCALE = { borderColor: '#232a34', minimumWidth: 84 };
+const chart = LightweightCharts.createChart($('chart'), {
+  autoSize: true, layout: LAYOUT, grid: GRID, rightPriceScale: SCALE,
+  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false, visible: false, rightOffset: 8 },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+});
+const candles = chart.addCandlestickSeries({ upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN });
+const volume = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '', lastValueVisible: false, priceLineVisible: false });
+volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+const flowChart = LightweightCharts.createChart($('flow'), {
+  autoSize: true, layout: LAYOUT, grid: GRID, rightPriceScale: SCALE,
+  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false, rightOffset: 8 },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+});
+const deltaBars = flowChart.addHistogramSeries({ priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+const cvdLine = flowChart.addLineSeries({ priceScaleId: 'cvd', color: ACCENT, lineWidth: 2, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+flowChart.priceScale('cvd').applyOptions({ scaleMargins: { top: 0.08, bottom: 0.08 } });
+let syncing = false;
+const follow = (a, b) => a.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+  if (syncing || !range) return;
+  syncing = true; b.timeScale().setVisibleLogicalRange(range); syncing = false;
+});
+follow(chart, flowChart); follow(flowChart, chart);
+
+const delta = (c) => 2 * c.takerBuyVolume - c.volume;
+const cBar = (c) => ({ time: toTime(c.openTime), open: c.open, high: c.high, low: c.low, close: c.close });
+const vBar = (c) => ({ time: toTime(c.openTime), value: c.volume, color: (c.close >= c.open ? UP : DOWN) + '80' });
+const dBar = (c) => ({ time: toTime(c.openTime), value: delta(c), color: (delta(c) >= 0 ? UP : DOWN) + 'c0' });
+
+const say = (text) => { $('msg').textContent = text || ''; };
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `erro ${res.status}`);
+  return data;
+}
+
+// Roda uma acao que devolve a sessao atualizada; mostra o erro do servidor, se houver.
+let listed = ''; // o que a lista de sessoes mostra sobre a sessao atual
+async function act(fn) {
+  say('');
+  try {
+    S = await fn();
+    localStorage.setItem('replay', String(S.id));
+    render();
+    // A lista de sessoes traz o resultado de cada uma: atualiza quando ele muda.
+    const now = `${S.id}:${S.stats.trades}:${S.done}`;
+    if (now !== listed) { listed = now; loadSessions(S.id).catch(() => {}); }
+  } catch (err) {
+    say(err.message);
+  }
+}
+
+function drawCandles() {
+  const prec = S.hidden ? 4 : 2;
+  candles.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: 1 / 10 ** prec } });
+  // Mesma sessao e so candles novos no fim: acrescenta, para o grafico nao pular de lugar.
+  if (drawnId === S.id && S.candles.length >= drawn && drawn > 0) {
+    for (const c of S.candles.slice(drawn)) {
+      cum += delta(c);
+      candles.update(cBar(c)); volume.update(vBar(c)); deltaBars.update(dBar(c));
+      cvdLine.update({ time: toTime(c.openTime), value: cum });
+    }
+  } else {
+    cum = 0;
+    candles.setData(S.candles.map(cBar));
+    volume.setData(S.candles.map(vBar));
+    deltaBars.setData(S.candles.map(dBar));
+    cvdLine.setData(S.candles.map((c) => { cum += delta(c); return { time: toTime(c.openTime), value: cum }; }));
+    chart.timeScale().scrollToRealTime();
+  }
+  drawnId = S.id;
+  drawn = S.candles.length;
+}
+
+function drawTrades() {
+  for (const l of lines) candles.removePriceLine(l);
+  lines = [];
+  const first = S.candles.length ? S.candles[0].openTime : 0;
+  const marks = [];
+  for (const t of S.trades) {
+    const buy = t.side === 'buy';
+    if (t.entryTime >= first) {
+      marks.push({ time: toTime(t.entryTime), position: buy ? 'belowBar' : 'aboveBar', color: buy ? UP : DOWN, shape: buy ? 'arrowUp' : 'arrowDown', text: buy ? 'compra' : 'venda' });
+    }
+    if (!t.open && t.exitTime >= first) {
+      marks.push({ time: toTime(t.exitTime), position: buy ? 'aboveBar' : 'belowBar', color: t.result.netPct >= 0 ? UP : DOWN, shape: 'circle', text: pct(t.result.netPct) });
+    }
+    if (t.open) {
+      const line = (price, color, title) => lines.push(candles.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }));
+      line(t.entry, ACCENT, 'entrada');
+      line(t.stop, DOWN, 'stop');
+      if (t.target !== null) line(t.target, UP, 'alvo');
+    }
+  }
+  candles.setMarkers(marks.sort((a, b) => a.time - b.time));
+}
+
+const kinds = { stop: 'stop', target: 'alvo', time: 'prazo', manual: 'encerrada à mão', end: 'fim da sessão' };
+
+function cell(grid, label, value, klass) {
+  const a = document.createElement('span'); a.textContent = label;
+  const b = document.createElement('b'); b.textContent = value; if (klass) b.className = klass;
+  grid.append(a, b);
+}
+
+function render() {
+  if (!S) return;
+  const prec = S.hidden ? 4 : 2;
+  const last = S.candles.at(-1);
+  const open = S.trades.find((t) => t.open);
+  drawCandles();
+  drawTrades();
+  $('sid').textContent = `nº ${S.id} · ${S.tf}`;
+  $('rev').textContent = String(S.revealedCandles);
+  $('rest').textContent = String(S.remainingCandles);
+  $('last').textContent = last ? fmt(last.close, prec) : '—';
+  $('taxa').textContent = fmt(S.feePct, 2);
+  $('oculto').textContent = S.hidden
+    ? 'Data e preço disfarçados: o preço é um índice que começou em 100 e a data não é a real. Tudo aparece no fim.'
+    : '';
+  $('done').style.display = S.done ? 'block' : 'none';
+  if (S.done) $('done').textContent = `Sessão terminada. O período começava em ${new Date(S.realStart).toLocaleString('pt-BR')}.`;
+  for (const id of ['n1', 'n5', 'n20']) $(id).disabled = S.done;
+  $('form').style.display = S.done || open ? 'none' : 'block';
+  $('aberta').style.display = open ? 'block' : 'none';
+  if (open) {
+    const g = $('abertagrid'); g.textContent = '';
+    const dir = open.side === 'buy' ? 1 : -1;
+    const agora = last ? (dir * (last.close - open.entry) / open.entry) * 100 : 0;
+    cell(g, 'Lado', open.side === 'buy' ? 'compra' : 'venda', open.side === 'buy' ? 'up' : 'down');
+    cell(g, 'Entrada', fmt(open.entry, prec));
+    cell(g, 'Stop', fmt(open.stop, prec));
+    cell(g, 'Alvo', open.target === null ? 'sem alvo' : fmt(open.target, prec));
+    cell(g, 'Candles', `${open.bars} de ${open.maxBars}`);
+    cell(g, 'Se encerrar agora (bruto)', pct(agora), cls(agora));
+  }
+  const st = $('stats'); st.textContent = '';
+  if (!S.stats.trades) cell(st, 'Nenhuma operação encerrada', '');
+  else {
+    cell(st, 'Resultado líquido', pct(S.stats.netTotalPct), cls(S.stats.netTotalPct));
+    cell(st, 'Perda máxima (do pico)', pct(-S.stats.maxDrawdownPct), 'down');
+    cell(st, 'Pior operação', pct(S.stats.worstTradePct), cls(S.stats.worstTradePct));
+    cell(st, 'Expectativa por operação', pct(S.stats.expectancyPct), cls(S.stats.expectancyPct));
+    cell(st, 'R médio', fmt(S.stats.avgR, 2), cls(S.stats.avgR));
+    cell(st, 'Operações', String(S.stats.trades));
+    cell(st, 'Taxa de acerto', fmt(S.stats.winRatePct, 0) + '%', 'muted');
+  }
+  const tr = $('trades'); tr.textContent = '';
+  if (!S.trades.length) { const d = document.createElement('div'); d.className = 'muted'; d.textContent = 'Nenhuma ainda.'; tr.appendChild(d); }
+  for (const t of [...S.trades].reverse()) {
+    const d = document.createElement('div'); d.className = 'trade';
+    const head = document.createElement('b');
+    head.className = t.open ? '' : cls(t.result.netPct);
+    head.textContent = (t.side === 'buy' ? '▲ compra ' : '▼ venda ') + fmt(t.entry, prec)
+      + (t.open ? ' · aberta' : ` → ${fmt(t.exit, prec)} · ${pct(t.result.netPct)} líquido · ${fmt(t.result.rMultiple, 2)} R`);
+    const sub = document.createElement('small');
+    sub.textContent = t.open
+      ? `stop ${fmt(t.stop, prec)}${t.target === null ? '' : ` · alvo ${fmt(t.target, prec)}`}`
+      : `saiu por ${kinds[t.exitKind] || t.exitKind} em ${t.bars} candles · pior momento ${pct(t.result.worstPct)} · melhor ${pct(t.result.bestPct)}`;
+    d.append(head, sub);
+    if (t.reason) { const r = document.createElement('small'); r.textContent = `Motivo: ${t.reason}`; d.appendChild(r); }
+    tr.appendChild(d);
+  }
+}
+
+async function loadSessions(selectId) {
+  const list = await api('/api/replay/sessions');
+  const sel = $('sessoes');
+  sel.textContent = '';
+  const o0 = document.createElement('option'); o0.value = ''; o0.textContent = list.length ? 'Sessões anteriores…' : 'Nenhuma sessão ainda';
+  sel.appendChild(o0);
+  for (const s of list) {
+    const o = document.createElement('option');
+    o.value = String(s.id);
+    const quando = s.hidden ? 'período oculto' : new Date(s.realStart).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const res = s.stats.trades ? `${pct(s.stats.netTotalPct)} em ${s.stats.trades} op.` : 'sem operações';
+    o.textContent = `nº ${s.id} · ${s.tf} · ${quando} · ${res}${s.done ? '' : ' · em andamento'}`;
+    sel.appendChild(o);
+  }
+  sel.value = selectId ? String(selectId) : '';
+}
+
+const next = (n) => act(() => api('/api/replay/next', { id: S.id, n }));
+$('n1').onclick = () => next(1);
+$('n5').onclick = () => next(5);
+$('n20').onclick = () => next(20);
+$('sortear').onclick = () => act(() => api('/api/replay/sessions', { tf: $('tf').value, random: true }));
+$('escolher').onclick = () => {
+  const v = $('inicio').value;
+  if (!v) return say('Escolha a data e a hora de início.');
+  return act(() => api('/api/replay/sessions', { tf: $('tf').value, start: new Date(v).getTime() }));
+};
+$('sessoes').onchange = () => { const id = $('sessoes').value; if (id) act(() => api(`/api/replay/session?id=${id}`)); };
+$('registrar').onclick = async () => {
+  await act(() => api('/api/replay/trade', {
+    id: S.id, side: document.querySelector('input[name=lado]:checked').value,
+    stop: $('stop').value, target: $('alvo').value, maxBars: $('prazo').value, reason: $('motivo').value,
+  }));
+  if (!$('msg').textContent) { $('stop').value = ''; $('alvo').value = ''; $('motivo').value = ''; }
+};
+$('encerrar').onclick = () => act(() => api('/api/replay/close', { id: S.id }));
+// Barra de espaco = proximo candle (fora dos campos de texto).
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || !S || S.done) return;
+  if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(document.activeElement.tagName)) return;
+  e.preventDefault();
+  next(1);
+});
+
+(async () => {
+  try {
+    const saved = Number(new URLSearchParams(location.search).get('id') || localStorage.getItem('replay'));
+    await loadSessions(saved);
+    if (saved) await act(() => api(`/api/replay/session?id=${saved}`));
+    else say('Clique em "Sortear período" para começar.');
+  } catch (err) {
+    say(err.message);
+  }
+})();
+</script>
+</body>
+</html>

@@ -111,6 +111,45 @@ export async function openDb(file) {
       qty    REAL NOT NULL,
       PRIMARY KEY (symbol, time, is_bid, rank)
     ) WITHOUT ROWID;
+
+    -- Fase 3. Sessoes de replay: um periodo passado revelado candle a candle.
+    CREATE TABLE IF NOT EXISTS replay_sessions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT    NOT NULL,
+      tf         TEXT    NOT NULL,     -- tempo grafico da sessao (ex.: 5m)
+      start_time INTEGER NOT NULL,     -- abertura do primeiro candle a revelar (ms UTC)
+      end_time   INTEGER NOT NULL,     -- fim do periodo (exclusivo)
+      cursor     INTEGER NOT NULL,     -- abertura do ultimo candle ja revelado
+      context    INTEGER NOT NULL,     -- quantos candles anteriores ao inicio ficam visiveis
+      hidden     INTEGER NOT NULL,     -- 1 = data e preco disfarcados ate a sessao acabar
+      scale      REAL    NOT NULL,     -- fator dos precos mostrados (1 quando nao disfarcada)
+      time_shift INTEGER NOT NULL,     -- deslocamento dos horarios mostrados (0 quando nao disfarcada)
+      fee_pct    REAL    NOT NULL,     -- taxa por lado usada nas contas desta sessao
+      created_at INTEGER NOT NULL
+    );
+
+    -- Operacoes registradas no replay. O preco de entrada e sempre o fechamento do ultimo
+    -- candle revelado na hora do registro; o resultado so e preenchido pelos candles
+    -- revelados depois. Precos reais (nunca os disfarcados).
+    CREATE TABLE IF NOT EXISTS replay_trades (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      made_at    INTEGER NOT NULL,     -- relogio real em que foi registrada
+      entry_time INTEGER NOT NULL,     -- candle em que foi registrada
+      side       TEXT    NOT NULL,     -- 'buy' ou 'sell'
+      entry      REAL    NOT NULL,
+      stop       REAL    NOT NULL,
+      target     REAL,                 -- opcional
+      max_bars   INTEGER NOT NULL,     -- prazo maximo, em candles
+      reason     TEXT,                 -- por que entrou (texto livre)
+      bars       INTEGER NOT NULL DEFAULT 0,  -- candles ja passados com a operacao aberta
+      worst      REAL,                 -- pior preco visto com a operacao aberta
+      best       REAL,                 -- melhor preco visto
+      exit_time  INTEGER,              -- preenchidos quando a operacao termina
+      exit       REAL,
+      exit_kind  TEXT                  -- 'stop', 'target', 'time', 'manual' ou 'end'
+    );
+    CREATE INDEX IF NOT EXISTS replay_trades_session ON replay_trades (session_id, id);
   `);
 
   // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
@@ -227,6 +266,27 @@ export async function openDb(file) {
   // Intercala compra e venda de cada faixa, na ordem das colunas (b1, a1, b2, a2, ...).
   const bands = (r) => r.b.flatMap((v, i) => [v, r.a[i]]);
 
+  // ---------- Fase 3: replay ----------
+  const SESSION_COLS = `id, symbol, tf, start_time AS startTime, end_time AS endTime, cursor, context,
+    hidden, scale, time_shift AS timeShift, fee_pct AS feePct, created_at AS createdAt`;
+  const TRADE_ROW = `id, session_id AS sessionId, made_at AS madeAt, entry_time AS entryTime, side, entry, stop,
+    target, max_bars AS maxBars, reason, bars, worst, best, exit_time AS exitTime, exit, exit_kind AS exitKind`;
+  const sessionInsStmt = db.prepare(`
+    INSERT INTO replay_sessions (symbol, tf, start_time, end_time, cursor, context, hidden, scale, time_shift, fee_pct, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const sessionGetStmt = db.prepare(`SELECT ${SESSION_COLS} FROM replay_sessions WHERE id = ?`);
+  const sessionListStmt = db.prepare(`SELECT ${SESSION_COLS} FROM replay_sessions WHERE symbol = ? ORDER BY id DESC LIMIT 100`);
+  const sessionCursorStmt = db.prepare('UPDATE replay_sessions SET cursor = ? WHERE id = ?');
+  const rtradeInsStmt = db.prepare(`
+    INSERT INTO replay_trades (session_id, made_at, entry_time, side, entry, stop, target, max_bars, reason, worst, best)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const rtradeListStmt = db.prepare(`SELECT ${TRADE_ROW} FROM replay_trades WHERE session_id = ? ORDER BY id`);
+  const rtradeUpdStmt = db.prepare(`
+    UPDATE replay_trades SET bars = ?, worst = ?, best = ?, exit_time = ?, exit = ?, exit_kind = ? WHERE id = ?
+  `);
+
   const tx = (fn) => {
     db.exec('BEGIN');
     try {
@@ -289,6 +349,20 @@ export async function openDb(file) {
     }),
     deleteBookBefore: (symbol, time) =>
       Number(deleteBookStmt.run(symbol, time).changes) + Number(deleteWallsStmt.run(symbol, time).changes),
+
+    replayCreate: (s) => Number(sessionInsStmt.run(
+      s.symbol, s.tf, s.startTime, s.endTime, s.cursor, s.context, s.hidden ? 1 : 0, s.scale, s.timeShift, s.feePct, s.createdAt,
+    ).lastInsertRowid),
+    replayGet: (id) => sessionGetStmt.get(id) ?? null,
+    replayList: (symbol) => sessionListStmt.all(symbol),
+    replaySetCursor: (id, cursor) => sessionCursorStmt.run(cursor, id),
+    replayAddTrade: (t) => Number(rtradeInsStmt.run(
+      t.sessionId, t.madeAt, t.entryTime, t.side, t.entry, t.stop, t.target ?? null, t.maxBars, t.reason ?? null, t.entry, t.entry,
+    ).lastInsertRowid),
+    replayTrades: (sessionId) => rtradeListStmt.all(sessionId),
+    replayUpdateTrade: (t) => rtradeUpdStmt.run(
+      t.bars, t.worst, t.best, t.exitTime ?? null, t.exit ?? null, t.exitKind ?? null, t.id,
+    ),
 
     close: () => db.close(),
   };

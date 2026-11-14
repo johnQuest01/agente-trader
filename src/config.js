@@ -40,6 +40,11 @@ export const BOOK = process.env.BOOK !== '0';
 // dia). A media por minuto fica para sempre.
 export const BOOK_KEEP_DAYS = Number(process.env.BOOK_KEEP_DAYS || 14);
 
+// ---------- Fase 3: replay ----------
+// Taxa por lado, em %, descontada na entrada e na saida de cada operacao simulada. 0,1% e a
+// taxa padrao de quem agride (taker) no mercado a vista da Binance, sem desconto.
+export const REPLAY_FEE_PCT = Number(process.env.REPLAY_FEE_PCT || 0.1);
+
 // Guardamos so candles de 1 minuto; os outros tempos sao calculados a partir deles.
 export const TIMEFRAMES = {
   '1m': 1 * MINUTE,

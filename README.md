@@ -2,7 +2,8 @@
 
 Laboratorio local de trading com dados reais da Binance (par BTCUSDT por padrao).
 Fase 1: coletor de candles de 1 minuto em SQLite + grafico no navegador.
-Fase 2 (em andamento): negocios, agressao compradora x vendedora por minuto e ordens grandes.
+Fase 2: negocios, agressao compradora x vendedora por minuto, ordens grandes e livro de ofertas.
+Fase 3: replay de um periodo passado, com a operacao registrada antes de ver o resultado.
 Leia `CLAUDE.md` para o objetivo, as fases e o estado do projeto.
 
 ## Requisitos
@@ -74,8 +75,22 @@ melhor compra, melhor venda e a quantidade ofertada de cada lado ate 0,02%, 0,05
 Custa cerca de 1,3 GB de trafego de internet por dia e uns 12 MB de disco por dia (guardados
 por 14 dias; a media por minuto fica para sempre). `BOOK=0 npm start` desliga essa parte.
 
+## Fase 3: replay
+
+Abra http://localhost:3333/replay. "Sortear periodo" escolhe um trecho qualquer do historico e
+esconde a data e o nivel de preco ate o fim. Os candles sao revelados um a um (botao ou barra
+de espaco); a operacao (compra ou venda, stop obrigatorio, alvo opcional, prazo e motivo) e
+registrada antes de revelar o proximo, com entrada no fechamento do ultimo candle visivel. O
+resumo da sessao da o resultado liquido de taxas, a perda maxima e a expectativa por operacao.
+
+```bash
+node scripts/testar-replay.js
+```
+
+confere as contas do replay (nao precisa do servidor nem da internet).
+
 ## Variaveis de ambiente
 
 `SYMBOL`, `PORT`, `BACKFILL_DAYS`, `BINANCE_REST`, `BINANCE_WS`, `TRADES`, `TRADES_KEEP_DAYS`,
-`TRADES_BACKFILL_HOURS`, `TRADES_MAX_GAP_HOURS`, `BIG_ORDER_USDT`, `BOOK`, `BOOK_KEEP_DAYS`
-(ver `src/config.js`).
+`TRADES_BACKFILL_HOURS`, `TRADES_MAX_GAP_HOURS`, `BIG_ORDER_USDT`, `BOOK`, `BOOK_KEEP_DAYS`,
+`REPLAY_FEE_PCT` (ver `src/config.js`).
