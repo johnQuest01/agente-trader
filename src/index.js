@@ -1,4 +1,4 @@
-import { SYMBOL, PORT, BACKFILL_DAYS, DB_FILE } from './config.js';
+import { SYMBOL, PORT, BACKFILL_DAYS, DB_FILE, TRADES } from './config.js';
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 13)) {
@@ -56,6 +56,7 @@ async function fillGaps() {
 log(`baixando historico (${BACKFILL_DAYS} dias de candles de 1 minuto)...`);
 await fillGaps();
 
+let lastMinuteSeen = null;
 const stop = streamKlines(SYMBOL, {
   log,
   onOpen: fillGaps, // a cada (re)conexao, tapa o buraco do tempo que ficou fora
@@ -73,12 +74,42 @@ const stop = streamKlines(SYMBOL, {
       return;
     }
     app.broadcastCandle(candle);
+    // Rede de seguranca: ao comecar um minuto novo, o anterior ja tem que estar fechado no
+    // banco (o fechamento chega pelo ao vivo antes do primeiro negocio do minuto seguinte).
+    // Se sobrou um candle provisorio de um minuto que ja acabou, o fechamento dele se perdeu:
+    // busca o definitivo pelo historico, que retoma do primeiro candle ainda aberto.
+    if (candle.openTime !== lastMinuteSeen) {
+      lastMinuteSeen = candle.openTime;
+      const stale = db.firstUnclosedOpenTime(SYMBOL);
+      if (stale !== null && stale < candle.openTime) {
+        log(`candle de ${new Date(stale).toISOString().slice(11, 16)} UTC ficou sem fechamento; buscando o definitivo`);
+        fillGaps();
+      }
+    }
   },
 });
+
+// Fase 2: negocios, fluxo por minuto e ordens grandes. Usa uma conexao propria, separada
+// da dos candles: se uma cair, a outra continua.
+let trades = null;
+if (TRADES) {
+  const { startTrades } = await import('./trades.js');
+  status.trades = { live: false, filling: false };
+  trades = startTrades({
+    db, symbol: SYMBOL, log,
+    onStatus: (s) => {
+      status.trades = s;
+      app.broadcastStatus();
+    },
+    onFlow: (flow) => app.broadcastFlow(flow),
+    onBig: (order) => app.broadcastBig(order),
+  });
+}
 
 process.on('SIGINT', () => {
   log('encerrando...');
   stop();
+  trades?.stop();
   app.server.close();
   db.close();
   process.exit(0);

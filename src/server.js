@@ -2,7 +2,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { TIMEFRAMES, MINUTE } from './config.js';
-import { aggregate } from './aggregate.js';
+import { aggregate, aggregateFlow } from './aggregate.js';
 
 const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
 
@@ -30,6 +30,11 @@ export function startServer({ db, symbol, port, getStatus }) {
           candles: db.count(symbol),
           first: db.firstOpenTime(symbol),
           last: db.lastOpenTime(symbol),
+          // Fase 2: de quando a quando ha negocios crus e fluxo por minuto no banco.
+          tradesFirst: db.firstTrade(symbol)?.time ?? null,
+          tradesLast: db.lastTrade(symbol)?.time ?? null,
+          flowFirst: db.firstFlowTime(symbol),
+          flowLast: db.lastFlow(symbol)?.openTime ?? null,
           ...getStatus(),
         });
       }
@@ -46,6 +51,29 @@ export function startServer({ db, symbol, port, getStatus }) {
         const from = Math.max(Math.floor(to / bucket) * bucket - (limit - 1) * bucket, db.firstOpenTime(symbol));
         const rows = db.range(symbol, from, to);
         return json(res, 200, bucket === MINUTE ? rows : aggregate(rows, bucket));
+      }
+
+      // Fase 2. Fluxo por periodo: volume de agressao compradora e vendedora, nos mesmos
+      // tempos graficos dos candles. `complete: false` = faltam negocios naquele periodo.
+      if (url.pathname === '/api/flow') {
+        const tf = url.searchParams.get('tf') || '1m';
+        const bucket = TIMEFRAMES[tf];
+        if (!bucket) return json(res, 400, { error: `timeframe desconhecido: ${tf}` });
+        const limit = Math.max(1, Math.min(5000, Number(url.searchParams.get('limit')) || 1000));
+        const last = db.lastFlow(symbol)?.openTime ?? null;
+        if (last === null) return json(res, 200, []);
+        const to = Math.min(Number(url.searchParams.get('to')) || last, last);
+        const from = Math.max(Math.floor(to / bucket) * bucket - (limit - 1) * bucket, db.firstFlowTime(symbol));
+        return json(res, 200, aggregateFlow(db.flowRange(symbol, from, to), bucket));
+      }
+
+      // Fase 2. Ordens agressoras grandes, da mais recente para a mais antiga.
+      // `min` = valor minimo em USDT; `to` = so as de ate esse horario (para paginar).
+      if (url.pathname === '/api/big') {
+        const min = Math.max(0, Number(url.searchParams.get('min')) || 0);
+        const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get('limit')) || 100));
+        const to = Number(url.searchParams.get('to')) || Number.MAX_SAFE_INTEGER;
+        return json(res, 200, db.bigRecent(symbol, min, to, limit));
       }
 
       if (url.pathname === '/api/stream') {
@@ -91,5 +119,7 @@ export function startServer({ db, symbol, port, getStatus }) {
     server,
     broadcastCandle: (candle) => send('candle', candle),
     broadcastStatus: () => send('status', getStatus()),
+    broadcastFlow: (flow) => send('flow', flow), // fluxo do minuto em formacao
+    broadcastBig: (order) => send('big', order), // ordem agressora grande que acabou de sair
   };
 }

@@ -22,7 +22,7 @@ operação — não taxa de acerto.
 
 1. **Coletor e gráfico** (TESTADO na máquina do Bruno em 14/11/2026 — ver abaixo)
 2. Fluxo e métricas: aggTrades (agressão compradora x vendedora), negócios grandes
-   ("baleias"), livro de ofertas gravado ao vivo
+   ("baleias"), livro de ofertas gravado ao vivo (EM ANDAMENTO — ver "Fase 2" abaixo)
 3. Modo replay: reproduzir um dia passado candle a candle; registrar a previsão ANTES
    de revelar o resultado
 4. Tabela de eventos/notícias com horário exato, ligada ao gráfico (estudo de eventos:
@@ -98,6 +98,9 @@ do código):
   Limite de 15 s para o handshake e teto de 15 s entre tentativas.
 - **Na página, só a carga mais recente desenha o gráfico**, e a página recarrega sozinha
   quando a conexão com o servidor volta.
+- **Um candle provisório nunca fica para trás.** Ao começar um minuto novo, se o anterior
+  ainda está `closed=0` (o fechamento dele se perdeu), o coletor busca o definitivo pelo
+  histórico. Reproduzido com um repetidor que atrasa a ligação com a Binance.
 
 Pendências conhecidas (não bloqueiam a fase 2):
 - Gráfico mostra só as últimas 1500 barras e não pagina (fase 3 vai precisar).
@@ -114,4 +117,46 @@ Pendências conhecidas (não bloqueiam a fase 2):
   de reprodução (dela e das quedas de conexão) não estão no repositório.
 - O desenho da vela ao vivo foi conferido pelos dados, não olhando a tela.
 
-Próxima fase: 2.
+## Fase 2 — fluxo e métricas (em andamento)
+
+Pronto e testado em 14/11/2026 (Windows 10, Node 22.20): a base de dados. Faltam o painel
+no gráfico e o livro de ofertas.
+
+O que existe:
+- `src/trades.js` — coletor de negócios agregados (aggTrades) em conexão própria, separada
+  da dos candles; calcula o fluxo por minuto e as ordens grandes lendo os negócios do banco
+  em ordem. `TRADES=0` desliga tudo isso.
+- Tabelas novas em `data/market.db`: `agg_trades` (negócios crus, guardados por
+  `TRADES_KEEP_DAYS` = 7 dias; no BTCUSDT, 1 milhão por dia em média, uns 50 MB, mas
+  numa hora agitada passou de 200 mil, ritmo de 250 MB por dia), `flow_1m` (agressão compradora e vendedora por minuto, para sempre) e `big_orders`
+  (ordens agressoras a partir de `BIG_ORDER_USDT` = 25 mil USDT, para sempre).
+- `/api/flow?tf=&limit=&to=` (fluxo nos mesmos tempos gráficos dos candles) e
+  `/api/big?min=&limit=&to=` (ordens grandes); eventos `flow` e `big` no `/api/stream`.
+- `scripts/validar.js`, seção 5: confere tudo isso.
+
+Regras (não desfazer):
+- **O banco não tem buraco de negócios sem que isso fique marcado.** O id do negócio
+  agregado é sequencial; a cada reconexão o coletor procura saltos de id e baixa pelo
+  histórico exatamente o que falta. Se ficou parado mais que `TRADES_MAX_GAP_HOURS` (24 h),
+  não baixa o trecho perdido e os minutos dele ficam `complete=0`.
+- **Um minuto só é `complete=1` se os ids emendam do começo ao fim**, inclusive com o último
+  negócio do minuto anterior e o primeiro do seguinte. Quem consome o fluxo deve olhar
+  `complete`: um período incompleto subestima o volume dos dois lados.
+- **A prova de exatidão é o candle.** Em todo minuto completo, a soma dos negócios tem que
+  dar exatamente o volume, a agressão compradora e o número de negócios do candle daquele
+  minuto, que vem de outra fonte da Binance. As quantidades são somadas em inteiros de
+  1e-8 para a conta fechar sem erro de arredondamento.
+- **Ordem grande = negócios seguidos, no mesmo milissegundo e do mesmo lado, somados.** Uma
+  ordem a mercado que varre vários preços chega quebrada em um negócio por preço (40% das
+  ordens na amostra medida). É uma aproximação: a Binance não informa a qual ordem cada
+  negócio pertence, e duas ordens diferentes no mesmo milissegundo saem somadas.
+- `taker_buy = 1` quer dizer que o COMPRADOR agrediu (é o contrário do campo `m` da Binance).
+
+Verificado: retomada depois de ficar parado (26 mil negócios baixados em 12 s, sem buraco);
+queda da conexão ao vivo de candles e de negócios ao mesmo tempo (simulada); em todos os
+casos os minutos completos bateram exatamente com os candles, a amostra de 3.000 negócios
+crus bateu com a Binance e todas as ordens grandes conferiram com o recálculo.
+
+Falta na fase 2: painel de fluxo e marcação das ordens grandes no gráfico; livro de ofertas
+gravado ao vivo; rodar vários dias para conferir a limpeza dos negócios antigos e o tamanho
+real do banco.

@@ -46,3 +46,34 @@ export function aggregate(rows, bucketMs) {
   for (const b of out) delete b.allClosed;
   return out;
 }
+
+// Junta o fluxo de 1 minuto (tabela flow_1m) em periodos maiores. `rows` em ordem crescente.
+// `complete` so e true quando todos os minutos do periodo estao presentes e completos: um
+// periodo com negocios faltando subestima o volume dos dois lados.
+export function aggregateFlow(rows, bucketMs) {
+  const perBucket = bucketMs / MINUTE;
+  const out = [];
+  let cur = null;
+  const close = (b) => { b.complete = b.minutes === perBucket && b.allComplete; delete b.allComplete; };
+  for (const r of rows) {
+    const start = Math.floor(r.openTime / bucketMs) * bucketMs;
+    if (!cur || cur.openTime !== start) {
+      if (cur) close(cur);
+      cur = {
+        openTime: start, buyQty: 0, sellQty: 0, buyQuote: 0, sellQuote: 0, buyTrades: 0, sellTrades: 0,
+        minutes: 0, complete: false, allComplete: true,
+      };
+      out.push(cur);
+    }
+    cur.buyQty += r.buyQty;
+    cur.sellQty += r.sellQty;
+    cur.buyQuote += r.buyQuote;
+    cur.sellQuote += r.sellQuote;
+    cur.buyTrades += r.buyTrades;
+    cur.sellTrades += r.sellTrades;
+    cur.minutes += 1;
+    if (!r.complete) cur.allComplete = false;
+  }
+  if (cur) close(cur);
+  return out;
+}

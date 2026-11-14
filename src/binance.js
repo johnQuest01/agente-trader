@@ -130,7 +130,8 @@ export async function backfill(db, symbol, days, log = () => {}) {
   return total;
 }
 
-// Fluxo ao vivo dos candles de 1 minuto, com reconexao automatica.
+// Conexao WebSocket com reconexao automatica, usada por todos os fluxos ao vivo (candles e
+// negocios). `label` identifica o fluxo no log; `onMessage` recebe cada mensagem ja em JSON.
 //
 // Tres formas de a conexao morrer:
 //  - o outro lado fecha o TCP: chega o evento 'close' e reconectamos;
@@ -141,8 +142,7 @@ export async function backfill(db, symbol, days, log = () => {}) {
 //    mensagem. Nao da para esperar o fechamento gracioso (ws.close() manda um frame e espera
 //    resposta que nunca vem; o WebSocket do Node ficaria em CLOSING para sempre), entao
 //    abandonamos o socket e abrimos outro. Eventos do socket abandonado sao ignorados.
-export function streamKlines(symbol, { onCandle, onOpen, onStatus, log = () => {} }) {
-  const url = `${WS_URL}/ws/${symbol.toLowerCase()}@kline_1m`;
+function openStream(url, label, symbol, { onMessage, onOpen, onStatus, log = () => {} }) {
   const WATCHDOG_MS = 60_000;
   const HANDSHAKE_MS = 15_000;
   const MAX_WAIT_MS = 15_000;
@@ -166,7 +166,7 @@ export function streamKlines(symbol, { onCandle, onOpen, onStatus, log = () => {
     onStatus?.(false);
     attempt += 1;
     const wait = Math.min(MAX_WAIT_MS, 1000 * 2 ** Math.min(attempt, 5));
-    log(`ao vivo: ${why}, tentando de novo em ${wait / 1000}s`);
+    log(`${label}: ${why}, tentando de novo em ${wait / 1000}s`);
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(connect, wait);
   };
@@ -186,7 +186,7 @@ export function streamKlines(symbol, { onCandle, onOpen, onStatus, log = () => {
       attempt = 0;
       armWatchdog();
       onStatus?.(true);
-      log(`ao vivo: conectado em ${symbol}`);
+      log(`${label}: conectado em ${symbol}`);
       onOpen?.();
     });
     sock.addEventListener('message', (ev) => {
@@ -194,21 +194,7 @@ export function streamKlines(symbol, { onCandle, onOpen, onStatus, log = () => {
       armWatchdog();
       let msg;
       try { msg = JSON.parse(ev.data); } catch { return; }
-      const k = msg?.k;
-      if (!k) return;
-      onCandle({
-        symbol,
-        openTime: k.t,
-        open: +k.o,
-        high: +k.h,
-        low: +k.l,
-        close: +k.c,
-        volume: +k.v,
-        quoteVolume: +k.q,
-        trades: k.n,
-        takerBuyVolume: +k.V,
-        closed: !!k.x,
-      });
+      onMessage(msg);
     });
     sock.addEventListener('error', () => {
       clearTimeout(handshake);
@@ -229,4 +215,73 @@ export function streamKlines(symbol, { onCandle, onOpen, onStatus, log = () => {
     clearTimeout(reconnectTimer);
     try { ws?.close(); } catch {}
   };
+}
+
+// Candles de 1 minuto ao vivo.
+export function streamKlines(symbol, { onCandle, onOpen, onStatus, log }) {
+  return openStream(`${WS_URL}/ws/${symbol.toLowerCase()}@kline_1m`, 'ao vivo', symbol, {
+    onOpen, onStatus, log,
+    onMessage: (msg) => {
+      const k = msg?.k;
+      if (!k) return;
+      onCandle({
+        symbol,
+        openTime: k.t,
+        open: +k.o,
+        high: +k.h,
+        low: +k.l,
+        close: +k.c,
+        volume: +k.v,
+        quoteVolume: +k.q,
+        trades: k.n,
+        takerBuyVolume: +k.V,
+        closed: !!k.x,
+      });
+    },
+  });
+}
+
+// ---------- Fase 2: negocios agregados (aggTrades) ----------
+//
+// Um negocio agregado junta os negocios de uma mesma ordem agressora feitos no mesmo preco e
+// no mesmo instante. Campos da Binance (iguais no REST e no WebSocket):
+//   a = id do negocio agregado (sequencial por par, sem buracos)   p = preco   q = quantidade
+//   f, l = primeiro e ultimo negocio individual   T = horario   m = "o comprador era o maker"
+// m = true quer dizer que quem estava parado no livro era o comprador, ou seja, quem AGREDIU
+// foi o vendedor. Guardamos o contrario (`takerBuy`), que e o que interessa para ler o fluxo.
+function toTrade(symbol, r) {
+  return { symbol, id: r.a, time: r.T, price: +r.p, qty: +r.q, trades: r.l - r.f + 1, takerBuy: !r.m };
+}
+
+// Ate 1000 negocios por pedido. Com `fromId`, a partir daquele id; com `startTime`/`endTime`
+// (janela de menos de 1 hora), a partir daquele horario; sem nada, os mais recentes.
+export async function fetchAggTrades(symbol, { fromId, startTime, endTime, limit = 1000 } = {}) {
+  let url = `${REST_URL}/api/v3/aggTrades?symbol=${symbol}&limit=${limit}`;
+  if (fromId !== undefined) url += `&fromId=${fromId}`;
+  if (startTime !== undefined) url += `&startTime=${startTime}`;
+  if (endTime !== undefined) url += `&endTime=${endTime}`;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    // Limite de requisicoes: a Binance diz quanto esperar. Insistir antes disso leva a bloqueio.
+    if ((res.status === 429 || res.status === 418) && attempt < 3) {
+      await sleep(Math.min(120, Number(res.headers.get('retry-after')) || 30) * 1000);
+      continue;
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Binance respondeu ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return (await res.json()).map((r) => toTrade(symbol, r));
+  }
+}
+
+// Negocios ao vivo.
+export function streamAggTrades(symbol, { onTrade, onOpen, onStatus, log }) {
+  return openStream(`${WS_URL}/ws/${symbol.toLowerCase()}@aggTrade`, 'negocios', symbol, {
+    onOpen, onStatus, log,
+    onMessage: (msg) => {
+      if (msg?.e !== 'aggTrade') return;
+      onTrade(toTrade(symbol, msg));
+    },
+  });
 }

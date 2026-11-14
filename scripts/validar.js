@@ -19,6 +19,10 @@
 //      banco comecar no meio de um candle maior, o nosso sai sem os minutos anteriores.
 //   3. Buracos: lista qualquer minuto faltando entre o primeiro e o ultimo candle do banco.
 //   4. Sanidade: duplicados, candles marcados como abertos.
+//   5. Fase 2 (se houver negocios no banco): ids dos negocios sem buraco; fluxo por minuto x
+//      candles (volume, agressao compradora e numero de negocios tem que bater exatamente em
+//      todo minuto marcado como completo); amostra de negocios crus x Binance; ordens grandes
+//      recalculadas a partir dos negocios crus.
 //
 // Teste de retomada (parar, esperar, subir de novo) e manual: rode este script antes e depois;
 // a contagem deve crescer so pelos minutos que passaram, sem buraco e sem duplicado.
@@ -37,7 +41,7 @@ const SEM_API = process.argv.includes('--sem-api');
 const COMPLETO = process.argv.includes('--completo');
 
 const { DatabaseSync } = await import('node:sqlite');
-const dbFile = fileURLToPath(new URL('../data/market.db', import.meta.url));
+const dbFile = process.env.DB_FILE || fileURLToPath(new URL('../data/market.db', import.meta.url));
 const db = new DatabaseSync(dbFile, { readOnly: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -268,6 +272,122 @@ const abertos = db.prepare('SELECT open_time t FROM candles WHERE symbol = ? AND
 const velhos = abertos.filter((r) => r.t + MINUTE <= serverTime - MINUTE);
 console.log(`candles marcados como abertos: ${abertos.length} (deveria ser 0 ou 1, o minuto atual)`);
 if (velhos.length) falha(`${velhos.length} ja fechados na Binance mas com closed=0 no banco: ${velhos.map((r) => iso(r.t)).join(', ')}`);
+
+// ---------- 5. fase 2: negocios, fluxo por minuto e ordens grandes ----------
+console.log('\n== 5. negocios e fluxo (fase 2) ==');
+const temFase2 = db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type = 'table' AND name = 'agg_trades'").get().n;
+const neg = temFase2
+  ? db.prepare('SELECT COUNT(*) n, MIN(id) a, MAX(id) b, MIN(time) f, MAX(time) l FROM agg_trades WHERE symbol = ?').get(SYMBOL)
+  : { n: 0 };
+if (!neg.n) {
+  console.log('sem negocios no banco (coletor da fase 2 desligado, ou ainda nao rodou)');
+} else {
+  const U = (x) => Math.round(x * 1e8); // compara quantidades em inteiros de 1e-8, sem erro de arredondamento
+  const hms = (ms) => new Date(ms).toISOString().slice(11, 19);
+  console.log(`negocios crus: ${neg.n}  de ${iso(neg.f)} a ${iso(neg.l)} UTC  (ids ${neg.a} a ${neg.b})`);
+
+  // 5a. Buracos de id. Um buraco e aceitavel so se os minutos em volta estiverem marcados
+  // como incompletos (o coletor nao baixa o que ficou parado por tempo demais).
+  const saltos = db.prepare(`
+    SELECT id, time, nxt, nxt_time FROM (
+      SELECT id, time, LEAD(id) OVER w nxt, LEAD(time) OVER w nxt_time
+      FROM agg_trades WHERE symbol = ? WINDOW w AS (ORDER BY time, id)
+    ) WHERE nxt IS NOT NULL AND nxt != id + 1
+  `).all(SYMBOL);
+  if (!saltos.length) console.log(`ids sem buraco: ${neg.b - neg.a + 1 === neg.n ? 'OK' : 'CONTAGEM NAO BATE'}`);
+  else {
+    console.log(`buracos de id: ${saltos.length}`);
+    for (const s of saltos.slice(0, 5)) console.log(`  entre ${iso(s.time)} e ${iso(s.nxt_time)} UTC faltam ${s.nxt - s.id - 1} negocios`);
+  }
+  if (!saltos.length && neg.b - neg.a + 1 !== neg.n) falha('a quantidade de negocios nao bate com o intervalo de ids');
+
+  // 5b. Fluxo por minuto x candles. Os candles vem de outra fonte da Binance (klines) e ja
+  // foram conferidos acima; se a soma dos negocios de um minuto bate com o candle dele em
+  // volume, agressao compradora e numero de negocios, nao falta nem sobra negocio naquele minuto.
+  const fluxo = db.prepare(`
+    SELECT f.open_time t, f.buy_qty bq, f.sell_qty sq, f.buy_trades bt, f.sell_trades st, f.complete ok,
+           c.volume v, c.taker_buy_volume tb, c.trades n, c.closed fechado
+    FROM flow_1m f LEFT JOIN candles c ON c.symbol = f.symbol AND c.open_time = f.open_time
+    WHERE f.symbol = ? ORDER BY f.open_time
+  `).all(SYMBOL);
+  let completos = 0, incompletos = 0, iguais = 0, semCandle = 0;
+  const difs = [];
+  for (const r of fluxo) {
+    if (!r.ok) { incompletos++; continue; }
+    completos++;
+    if (r.v === null || !r.fechado) { semCandle++; continue; }
+    const d = [];
+    if (U(r.bq) + U(r.sq) !== U(r.v)) d.push(`volume: fluxo=${(U(r.bq) + U(r.sq)) / 1e8} candle=${r.v}`);
+    if (U(r.bq) !== U(r.tb)) d.push(`agressao compradora: fluxo=${r.bq} candle=${r.tb}`);
+    if (r.bt + r.st !== r.n) d.push(`negocios: fluxo=${r.bt + r.st} candle=${r.n}`);
+    if (d.length) difs.push(`${iso(r.t)}: ${d.join('; ')}`); else iguais++;
+  }
+  console.log(`fluxo por minuto: ${fluxo.length} minutos  completos: ${completos}  incompletos: ${incompletos}`);
+  console.log(`minutos completos x candles: ${iguais} identicos  ${difs.length} diferentes  ${semCandle} sem candle fechado para comparar`);
+  for (const d of difs.slice(0, 10)) console.log('  ', d);
+  if (difs.length) falhas++;
+  // Um buraco de id tem que aparecer como minuto incompleto dos dois lados.
+  const completo = new Map(fluxo.map((r) => [r.t, r.ok]));
+  for (const s of saltos) {
+    for (const t of [Math.floor(s.time / MINUTE) * MINUTE, Math.floor(s.nxt_time / MINUTE) * MINUTE]) {
+      if (completo.get(t)) falha(`minuto ${iso(t)} esta marcado como completo, mas ha um buraco de negocios nele`);
+    }
+  }
+  // Minuto com candle fechado e com negocios, dentro do periodo do fluxo, mas sem linha de fluxo.
+  if (fluxo.length) {
+    const faltam = db.prepare(`
+      SELECT COUNT(*) n FROM candles c
+      WHERE c.symbol = ? AND c.closed = 1 AND c.trades > 0 AND c.open_time > ? AND c.open_time < ?
+        AND NOT EXISTS (SELECT 1 FROM flow_1m f WHERE f.symbol = c.symbol AND f.open_time = c.open_time)
+    `).get(SYMBOL, fluxo[0].t, fluxo.at(-1).t).n;
+    console.log(`minutos com candle e sem fluxo, dentro do periodo: ${faltam}${faltam ? ' (trecho em que o coletor de negocios ficou parado)' : ''}`);
+  }
+
+  // 5c. Amostra de negocios crus x Binance: 3 paginas de 1000, campo a campo.
+  const umNegocio = db.prepare('SELECT price, qty, trades, taker_buy tb FROM agg_trades WHERE symbol = ? AND time = ? AND id = ?');
+  let conferidos = 0, ruins = 0, ausentes = 0;
+  for (let i = 0; i < 3 && neg.b - neg.a > 1000; i++) {
+    const de = neg.a + Math.floor(Math.random() * (neg.b - neg.a - 1000));
+    const res = await fetch(`${REST}/api/v3/aggTrades?symbol=${SYMBOL}&fromId=${de}&limit=1000`, { signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) { falha(`Binance ${res.status} ao buscar negocios`); break; }
+    for (const b of await res.json()) {
+      const c = umNegocio.get(SYMBOL, b.T, b.a);
+      if (!c) { ausentes++; continue; }
+      conferidos++;
+      if (c.price !== +b.p || c.qty !== +b.q || c.trades !== b.l - b.f + 1 || !!c.tb !== !b.m) ruins++;
+    }
+    await sleep(120);
+  }
+  console.log(`amostra de negocios crus x Binance: ${conferidos} conferidos  ${ruins} diferentes  ${ausentes} que nao estao no banco`);
+  if (ruins) falhas++;
+  if (ausentes && !saltos.length) falha(`${ausentes} negocios da Binance nao estao no banco, e nao ha buraco de id que explique`);
+
+  // 5d. Ordens grandes: refaz o agrupamento (negocios seguidos, no mesmo milissegundo e do
+  // mesmo lado) a partir dos negocios crus e compara com a tabela.
+  const PISO = Number(process.env.BIG_ORDER_USDT || 25_000);
+  const refeitas = new Map();
+  let g = null, antes = null;
+  const fecha = () => { if (g && g.quote >= PISO && g.time > neg.f && g.time < neg.l) refeitas.set(g.firstId, g); g = null; };
+  for (const r of db.prepare('SELECT time, id, price, qty, taker_buy tb FROM agg_trades WHERE symbol = ? ORDER BY time, id').iterate(SYMBOL)) {
+    const emenda = antes !== null && r.id === antes + 1;
+    if (g && emenda && g.time === r.time && g.tb === r.tb) { g.quote += r.price * r.qty; g.prints++; }
+    else { fecha(); g = { firstId: r.id, time: r.time, tb: r.tb, quote: r.price * r.qty, prints: 1 }; }
+    antes = r.id;
+  }
+  fecha();
+  const gravadas = db.prepare('SELECT first_id firstId, quote, prints FROM big_orders WHERE symbol = ? AND time > ? AND time < ?').all(SYMBOL, neg.f, neg.l);
+  let ordensOk = 0, ordensRuins = 0;
+  for (const o of gravadas) {
+    const r = refeitas.get(o.firstId);
+    if (r && Math.abs(r.quote - o.quote) < 1e-6 && r.prints === o.prints) ordensOk++; else ordensRuins++;
+    refeitas.delete(o.firstId);
+  }
+  console.log(`ordens grandes (>= ${PISO} USDT) no periodo dos negocios crus: ${gravadas.length} gravadas  ${ordensOk} conferem  ${ordensRuins} diferentes  ${refeitas.size} que deveriam estar e nao estao`);
+  if (ordensRuins || refeitas.size) {
+    falhas++;
+    for (const r of [...refeitas.values()].slice(0, 5)) console.log(`   falta: ${hms(r.time)} UTC  ${r.quote.toFixed(0)} USDT`);
+  }
+}
 
 console.log(`\n${falhas ? `FALHOU: ${falhas} problema(s)` : 'TUDO OK'}`);
 process.exit(falhas ? 1 : 0);

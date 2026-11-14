@@ -17,6 +17,21 @@ export const DB_FILE = process.env.DB_FILE || fileURLToPath(new URL('../data/mar
 
 export const MINUTE = 60_000;
 
+// ---------- Fase 2: negocios (aggTrades), fluxo e ordens grandes ----------
+// TRADES=0 desliga o coletor de negocios e roda so os candles, como na fase 1.
+export const TRADES = process.env.TRADES !== '0';
+// Por quantos dias os negocios crus ficam no banco. O BTCUSDT teve em media 1 milhao por dia
+// (uns 50 MB), mas numa hora agitada passou de 200 mil (ritmo de 250 MB por dia).
+// O fluxo por minuto e as ordens grandes ficam para sempre.
+export const TRADES_KEEP_DAYS = Number(process.env.TRADES_KEEP_DAYS || 7);
+// Na primeira execucao, quantas horas de negocios baixar para tras.
+export const TRADES_BACKFILL_HOURS = Number(process.env.TRADES_BACKFILL_HOURS || 1);
+// Se o programa ficou parado mais do que isso, nao baixa tudo o que perdeu: recomeca do
+// periodo acima, e os minutos do buraco ficam marcados como incompletos.
+export const TRADES_MAX_GAP_HOURS = Number(process.env.TRADES_MAX_GAP_HOURS || 24);
+// Piso, em USDT, para gravar uma ordem agressora como "grande". A tela filtra dali para cima.
+export const BIG_ORDER_USDT = Number(process.env.BIG_ORDER_USDT || 25_000);
+
 // Guardamos so candles de 1 minuto; os outros tempos sao calculados a partir deles.
 export const TIMEFRAMES = {
   '1m': 1 * MINUTE,
