@@ -5,14 +5,17 @@ import { TIMEFRAMES, MINUTE } from './config.js';
 import { aggregate, aggregateFlow } from './aggregate.js';
 import { handleReplay } from './replay.js';
 import { handleEvents } from './events.js';
+import { handleAgent } from './agent.js';
 
 const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
 const REPLAY = fileURLToPath(new URL('../public/replay.html', import.meta.url));
 const EVENTOS = fileURLToPath(new URL('../public/eventos.html', import.meta.url));
+const AGENTE = fileURLToPath(new URL('../public/agente.html', import.meta.url));
 
 export function startServer({ db, symbol, port, getStatus }) {
   const clients = new Set();
   let book = null; // gravador do livro de ofertas (fase 2), ligado depois por attachBook
+  let agent = null; // agente da fase 5, ligado depois por attachAgent
 
   const json = (res, code, body) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -22,6 +25,12 @@ export function startServer({ db, symbol, port, getStatus }) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
+      // So atende quem chama pelo endereco desta maquina. Sem isso, uma pagina de outro site
+      // poderia apontar o proprio nome para 127.0.0.1 e, pelo navegador, conversar com este
+      // servidor como se fosse a tela (e a tela da fase 5 aprova ordens).
+      const host = String(req.headers.host || '').replace(/:\d+$/, '');
+      if (host !== 'localhost' && host !== '127.0.0.1') return json(res, 403, { error: 'este servidor so atende em localhost' });
+
       if (url.pathname === '/') {
         const html = await readFile(INDEX);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
@@ -43,6 +52,14 @@ export function startServer({ db, symbol, port, getStatus }) {
         return res.end(html);
       }
       if (await handleEvents(req, res, url, { db, symbol, json })) return;
+
+      // Fase 5: tela e rotas do agente.
+      if (url.pathname === '/agente') {
+        const html = await readFile(AGENTE);
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(html);
+      }
+      if (await handleAgent(req, res, url, { agent, json })) return;
 
       if (url.pathname === '/api/info') {
         return json(res, 200, {
@@ -156,5 +173,7 @@ export function startServer({ db, symbol, port, getStatus }) {
     broadcastBig: (order) => send('big', order), // ordem agressora grande que acabou de sair
     broadcastBook: (view) => send('book', view), // resumo do livro, uma vez por segundo
     attachBook: (b) => { book = b; },
+    broadcastAgent: () => send('agent', { time: Date.now() }), // algo mudou no agente: a tela busca o estado de novo
+    attachAgent: (a) => { agent = a; },
   };
 }

@@ -45,6 +45,19 @@ export const BOOK_KEEP_DAYS = Number(process.env.BOOK_KEEP_DAYS || 14);
 // taxa padrao de quem agride (taker) no mercado a vista da Binance, sem desconto.
 export const REPLAY_FEE_PCT = Number(process.env.REPLAY_FEE_PCT || 0.1);
 
+// ---------- Fase 5: agente e Demo Mode ----------
+// Os LIMITES DE RISCO nao estao aqui: ficam em src/limits.js e nao mudam por variavel de ambiente.
+// Endereco da corretora para as ordens. So e aceito o do Demo Mode ou um servidor de teste
+// nesta mesma maquina (a conferencia esta em src/demo.js).
+export const DEMO_URL = process.env.DEMO_URL || 'https://demo-api.binance.com';
+// Taxa por lado, em %, que a trava de risco usa para dimensionar uma operacao. O resultado de
+// cada operacao usa as taxas que a corretora cobrou de verdade.
+export const AGENT_FEE_PCT = Number(process.env.AGENT_FEE_PCT || 0.1);
+// Por quantos minutos uma proposta espera a decisao do Bruno antes de expirar.
+export const AGENT_PROPOSAL_TTL_MIN = Number(process.env.AGENT_PROPOSAL_TTL_MIN || 15);
+// Quanto acima da oferta de agora a compra aceita pagar, em %. E o teto da derrapagem na entrada.
+export const AGENT_MAX_SLIP_PCT = Number(process.env.AGENT_MAX_SLIP_PCT || 0.05);
+
 // Guardamos so candles de 1 minuto; os outros tempos sao calculados a partir deles.
 export const TIMEFRAMES = {
   '1m': 1 * MINUTE,

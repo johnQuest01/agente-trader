@@ -5,6 +5,8 @@ Fase 1: coletor de candles de 1 minuto em SQLite + grafico no navegador.
 Fase 2: negocios, agressao compradora x vendedora por minuto, ordens grandes e livro de ofertas.
 Fase 3: replay de um periodo passado, com a operacao registrada antes de ver o resultado.
 Fase 4: tabela de eventos com horario exato e a reacao do preco a cada um.
+Fase 5: propostas de operacao que so viram ordem depois de aprovadas, e so no Demo Mode da
+Binance (conta de demonstracao, sem dinheiro real).
 Leia `CLAUDE.md` para o objetivo, as fases e o estado do projeto.
 
 ## Requisitos
@@ -104,8 +106,40 @@ node scripts/testar-eventos.js
 
 confere as contas (nao precisa do servidor nem da internet).
 
+## Fase 5: agente e Demo Mode (simulacao)
+
+Abra http://localhost:3333/agente. Uma proposta de compra (stop obrigatorio, alvo opcional e
+motivo) fica esperando a decisao; nada e enviado antes de "Aprovar" (dois cliques). Aprovada,
+a trava de risco calcula o tamanho, a compra vai para o Demo Mode da Binance (conta de
+demonstracao, sem dinheiro real) e o stop fica parado na corretora. Tudo vai para o registro,
+que nao pode ser apagado. Por enquanto as propostas entram pelo formulario da tela: a IA que
+propoe ainda nao esta ligada.
+
+Para o agente poder enviar ordens faltam duas coisas, e as duas sao de quem usa:
+
+1. Os limites de risco, no arquivo `src/limits.js`: perda maxima por operacao, perda maxima
+   por dia, tamanho maximo da posicao e operacoes por dia. Enquanto estiverem vazios, nenhuma
+   ordem sai.
+2. As chaves do Demo Mode: crie em https://demo.binance.com ("API Key Management"), copie
+   `.env.example` para `.env` e preencha. Nunca use chave da conta de verdade. O programa so
+   fala com `https://demo-api.binance.com` e recusa qualquer outro endereco.
+
+O Demo Mode tem livro de ofertas proprio: o preco acompanha o mercado de verdade, mas nao e
+igual, e o resultado de la nao prova o que aconteceria com dinheiro real.
+
+```bash
+node scripts/testar-risco.js
+node scripts/testar-demo.js
+node scripts/testar-agente.js
+```
+
+conferem a trava de risco, o cliente do Demo Mode e o fluxo inteiro contra uma corretora de
+mentira (nao precisam do servidor, da internet nem de chave).
+
 ## Variaveis de ambiente
 
 `SYMBOL`, `PORT`, `BACKFILL_DAYS`, `BINANCE_REST`, `BINANCE_WS`, `TRADES`, `TRADES_KEEP_DAYS`,
 `TRADES_BACKFILL_HOURS`, `TRADES_MAX_GAP_HOURS`, `BIG_ORDER_USDT`, `BOOK`, `BOOK_KEEP_DAYS`,
-`REPLAY_FEE_PCT` (ver `src/config.js`).
+`REPLAY_FEE_PCT`, `AGENT_FEE_PCT`, `AGENT_PROPOSAL_TTL_MIN`, `AGENT_MAX_SLIP_PCT`, `DEMO_URL`
+(ver `src/config.js`). Elas tambem podem ficar no arquivo `.env`, que o git ignora; os limites
+de risco nao sao variaveis: ficam so em `src/limits.js`.

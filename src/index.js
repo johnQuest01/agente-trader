@@ -1,4 +1,8 @@
-import { SYMBOL, PORT, BACKFILL_DAYS, DB_FILE, TRADES, BOOK } from './config.js';
+import { envFileError, demoKeys } from './env.js'; // primeiro: le o .env antes de a configuracao ser lida
+import {
+  SYMBOL, PORT, BACKFILL_DAYS, DB_FILE, TRADES, BOOK,
+  DEMO_URL, AGENT_FEE_PCT, AGENT_PROPOSAL_TTL_MIN, AGENT_MAX_SLIP_PCT,
+} from './config.js';
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 13)) {
@@ -25,6 +29,41 @@ const db = await openDb(DB_FILE);
 const status = { live: false, backfilling: false };
 const app = startServer({ db, symbol: SYMBOL, port: PORT, getStatus: () => ({ ...status }) });
 log(`grafico em http://localhost:${PORT}  (par: ${SYMBOL})`);
+
+// Fase 5: agente (propostas, aprovacao do Bruno e ordens SO no Demo Mode). Sobe antes do
+// download do historico para retomar na hora uma operacao que tenha ficado aberta.
+// As chaves nunca sao escritas no log: so se existem ou nao.
+const { createAgent } = await import('./agent.js');
+const { createDemoClient } = await import('./demo.js');
+const { LIMITS } = await import('./limits.js');
+const { limitsProblem } = await import('./risk.js');
+if (envFileError) log(`agente: ${envFileError}`);
+let demoClient = null;
+try {
+  const keys = demoKeys();
+  if (keys) demoClient = createDemoClient({ ...keys, baseUrl: DEMO_URL });
+} catch (err) {
+  log(`agente: ${err.message}`);
+}
+const agent = createAgent({
+  db, symbol: SYMBOL, limits: LIMITS, client: demoClient,
+  feePct: AGENT_FEE_PCT, ttlMs: AGENT_PROPOSAL_TTL_MIN * 60_000, maxSlipPct: AGENT_MAX_SLIP_PCT,
+  log, onChange: () => app.broadcastAgent(),
+  // Preco do mercado de verdade (ultimo candle), so para conferir uma proposta ao ser criada.
+  refPrice: () => {
+    const last = db.lastOpenTime(SYMBOL);
+    return last === null ? null : db.candleAt(SYMBOL, last)?.close ?? null;
+  },
+});
+app.attachAgent(agent);
+// So comeca a acompanhar depois que a porta abriu. Se outro "npm start" ja esta rodando, este
+// processo termina sem mexer em nada: dois agentes na mesma conta poderiam se atrapalhar.
+if (app.server.listening) agent.start();
+else app.server.once('listening', () => agent.start());
+log(demoClient
+  ? `agente: chaves do Demo Mode encontradas; ordens so para ${demoClient.origin}`
+  : 'agente: sem chaves do Demo Mode no arquivo .env: nenhuma ordem sera enviada');
+if (limitsProblem(LIMITS)) log(`agente: ${limitsProblem(LIMITS)} (src/limits.js): nenhuma ordem sera enviada`);
 
 let filling = null;
 let retryTimer = null;
@@ -127,6 +166,7 @@ process.on('SIGINT', () => {
   stop();
   trades?.stop();
   book?.stop();
+  agent.stop(); // o stop de uma posicao aberta continua parado na corretora
   app.server.close();
   db.close();
   process.exit(0);

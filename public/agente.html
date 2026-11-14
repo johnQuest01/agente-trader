@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agente · Agente Trader</title>
+<style>
+  :root {
+    --bg: #0d1014; --panel: #151a21; --line: #232a34; --text: #d7dde5; --muted: #7d8896;
+    --up: #2ebd85; --down: #f6465d; --accent: #f0b90b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header b.title { font-size: 16px; }
+  .sim { border: 1px solid var(--accent); color: var(--accent); border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+  a { color: var(--accent); text-decoration: none; }
+  button, input, textarea {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.main { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button.danger { border-color: var(--down); color: var(--down); }
+  button.armed { background: var(--down); border-color: var(--down); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); } .accent { color: var(--accent); }
+  #msg { margin-left: auto; color: var(--down); font-size: 12px; max-width: 46%; text-align: right; }
+  #alerta { display: none; background: var(--down); color: #fff; padding: 8px 16px; font-weight: 600; }
+  #main { flex: 1; min-height: 0; display: flex; }
+  aside, #center { overflow-y: auto; }
+  #left { width: 310px; border-right: 1px solid var(--line); background: var(--panel); }
+  #center { flex: 1; min-width: 0; }
+  #right { width: 420px; border-left: 1px solid var(--line); background: var(--panel); }
+  section { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  section h3 { margin: 0 0 8px; font-size: 13px; }
+  section h3 span { font-weight: 400; }
+  .grid { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .grid span { color: var(--muted); }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .row label { color: var(--muted); font-size: 12px; min-width: 44px; }
+  .row input[type=number], .row input[type=text] { flex: 1; min-width: 0; }
+  textarea { width: 100%; height: 54px; resize: vertical; margin-top: 6px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+  .card.wait { border-color: var(--accent); }
+  .card.alert { border-color: var(--down); }
+  .card .top { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .card .why { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .card .prev { font-size: 13px; margin: 6px 0; }
+  .empty { color: var(--muted); font-size: 13px; }
+  .op { padding: 6px 0; border-top: 1px solid #1a2029; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .op:first-child { border-top: 0; }
+  .op small { color: var(--muted); display: block; overflow-wrap: anywhere; }
+  .log { padding: 4px 0; border-top: 1px solid #1a2029; font-size: 12px; overflow-wrap: anywhere; }
+  .log:first-child { border-top: 0; }
+  .log time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .log b { margin-right: 4px; }
+  @media (max-width: 1000px) {
+    body { height: auto; } #main { flex-direction: column; }
+    #left, #right { width: auto; border: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <b class="title">Agente</b>
+  <span class="sim">SIMULAÇÃO · Binance Demo Mode · sem dinheiro real</span>
+  <a href="/">← ao vivo</a>
+  <a href="/replay">Replay</a>
+  <a href="/eventos">Eventos</a>
+  <div id="msg"></div>
+</header>
+<div id="alerta"></div>
+<div id="main">
+  <aside id="left">
+    <section>
+      <h3>Limites de risco <span class="muted">(fixos em código)</span></h3>
+      <div class="grid" id="limites"></div>
+      <div class="hint" id="limiteshint"></div>
+    </section>
+    <section>
+      <h3>Demo Mode</h3>
+      <div class="grid" id="demo"></div>
+      <div class="hint" id="demohint"></div>
+    </section>
+    <section>
+      <h3>Hoje <span class="muted">(dia UTC)</span></h3>
+      <div class="grid" id="dia"></div>
+    </section>
+    <section>
+      <h3>Nova proposta <span class="muted">(manual)</span></h3>
+      <div class="row"><label for="stop">Stop</label><input type="number" id="stop" step="any" placeholder="preço da perda máxima"></div>
+      <div class="row"><label for="alvo">Alvo</label><input type="number" id="alvo" step="any" placeholder="opcional"></div>
+      <textarea id="motivo" placeholder="Por que esta operação? (fica registrado)"></textarea>
+      <div class="row"><button id="propor" class="main">Registrar proposta de compra</button></div>
+      <div class="hint">Só compra, sempre com stop. Registrar não envia nada: a proposta fica esperando a sua decisão ao lado. O tamanho quem calcula é a trava de risco.</div>
+    </section>
+  </aside>
+  <div id="center">
+    <section>
+      <h3>Esperando a sua decisão</h3>
+      <div id="pendentes"></div>
+    </section>
+    <section>
+      <h3>Posição aberta</h3>
+      <div id="aberta"></div>
+    </section>
+    <section>
+      <h3>Resultado das operações <span class="muted">(encerradas, em USDT de demonstração)</span></h3>
+      <div class="grid" id="stats" style="max-width: 420px"></div>
+    </section>
+    <section>
+      <h3>Propostas e operações</h3>
+      <div id="historico"></div>
+    </section>
+  </div>
+  <aside id="right">
+    <section>
+      <h3>Registro <span class="muted">(tudo o que foi proposto, decidido e enviado; não pode ser apagado)</span></h3>
+      <div id="registro"></div>
+    </section>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d = 2) => Number(n).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const qtd = (n) => Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 5, maximumFractionDigits: 8 });
+const sinal = (n) => (n >= 0 ? '+' : '') + fmt(n);
+const cls = (n) => (n >= 0 ? 'up' : 'down');
+const hora = (ms) => new Date(ms).toLocaleTimeString('pt-BR');
+const dataHora = (ms) => new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// Todo texto que vem do servidor (motivo da proposta, mensagens) entra na pagina como texto,
+// nunca como HTML.
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const LIVE = ['enviando', 'aberta', 'fechando', 'atencao'];
+const NOME = {
+  pendente: 'esperando decisão', recusada: 'recusada', expirada: 'expirou', barrada: 'barrada pela trava',
+  enviando: 'enviando a compra', aberta: 'aberta', fechando: 'saindo', fechada: 'encerrada', falhou: 'a compra falhou', atencao: 'ATENÇÃO',
+};
+const SAIDA = { stop: 'stop', alvo: 'alvo', manual: 'encerrada por você', emergencia: 'saída de emergência', poeira: 'sobra mínima' };
+const LIMITE = {
+  'tamanho maximo da posicao': 'tamanho máximo da posição', 'perda maxima por operacao': 'perda máxima por operação',
+  'perda maxima do dia': 'perda máxima do dia',
+};
+
+let S = null;        // o estado do agente, como o servidor devolveu
+let seq = 0;         // so a resposta mais recente desenha a tela
+let armed = null;    // botao esperando o segundo clique: { key, until }
+const cards = new Map(); // cartoes das propostas pendentes, por numero (para nao perder o que foi digitado)
+
+function setMsg(t) { $('msg').textContent = t || ''; }
+
+async function api(path, body) {
+  const res = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `erro ${res.status}`);
+  return data;
+}
+async function load() {
+  const mine = ++seq;
+  try {
+    const s = await api('/api/agent/state');
+    if (mine !== seq) return;
+    S = s;
+    render();
+  } catch (err) {
+    if (mine === seq) setMsg(`sem resposta do servidor: ${err.message}`);
+  }
+}
+async function act(path, body) {
+  const mine = ++seq;
+  setMsg('');
+  try {
+    const s = await api(path, body);
+    if (mine === seq) { S = s; render(); }
+  } catch (err) {
+    setMsg(err.message);
+    load();
+  }
+}
+// Acoes que mandam ordem pedem dois cliques: o primeiro arma o botao por 6 segundos.
+function twoStep(key, fn) {
+  if (armed && armed.key === key && Date.now() < armed.until) {
+    armed = null;
+    fn();
+    return;
+  }
+  armed = { key, until: Date.now() + 6000 };
+  render();
+  setTimeout(() => { if (armed && armed.key === key && Date.now() >= armed.until) { armed = null; render(); } }, 6100);
+}
+const isArmed = (key) => !!armed && armed.key === key && Date.now() < armed.until;
+
+// So mexe na pagina quando o conteudo mudou: assim um botao nao e trocado por outro igual no
+// meio de um clique (a tela se atualiza sozinha a cada poucos segundos).
+const drawn = new WeakMap();
+function setHtml(el, html) {
+  if (drawn.get(el) === html) return;
+  el.innerHTML = html;
+  drawn.set(el, html);
+}
+function grid(el, rows) {
+  setHtml(el, rows.map(([k, v, c]) => `<span>${esc(k)}</span><b class="${c || ''}">${esc(v)}</b>`).join(''));
+}
+
+function renderLimits() {
+  const l = S.limits;
+  const v = (x, suf) => (x === null ? '—' : fmt(x, x % 1 ? 2 : 0) + suf);
+  grid($('limites'), [
+    ['Perda máxima por operação', v(l.maxLossPerTradePct, '% do saldo')],
+    ['Perda máxima por dia', v(l.maxLossPerDayPct, '% do saldo')],
+    ['Tamanho máximo da posição', v(l.maxPositionPct, '% do saldo')],
+    ['Operações por dia', v(l.maxTradesPerDay, '')],
+  ]);
+  setHtml($('limiteshint'), l.problem
+    ? `<span class="down">${esc(l.problem)}. Enquanto isso, nenhuma ordem é enviada.</span> Os números ficam no arquivo src/limits.js e quem define é você.`
+    : 'Só mudam editando o arquivo src/limits.js e reiniciando o programa. A IA não tem como alterar.');
+}
+
+function renderDemo() {
+  const d = S.demo, a = S.account;
+  const rows = [['Chaves no arquivo .env', d.keys ? 'encontradas' : 'faltam', d.keys ? 'up' : 'down']];
+  if (d.url) rows.push(['Ordens vão para', d.url.replace(/^https?:\/\//, '')]);
+  if (a) {
+    rows.push([`Saldo (${a.asset})`, fmt(a.equity)], ['Livre para comprar', fmt(a.free)]);
+    rows.push(['Preço no Demo Mode', `${fmt(a.bid)} / ${fmt(a.ask)}`], ['Lido às', hora(a.at)]);
+  }
+  grid($('demo'), rows);
+  setHtml($('demohint'), !d.keys
+    ? 'Crie a chave em demo.binance.com (API Key Management) e coloque no arquivo .env, como no .env.example. Nunca uma chave da conta de verdade.'
+    : d.error ? `<span class="down">Sem contato com o Demo Mode: ${esc(d.error)}</span>`
+    : 'O Demo Mode tem livro de ofertas próprio: o preço acompanha o mercado de verdade, mas não é igual.');
+}
+
+function renderDay() {
+  const d = S.day, l = S.limits;
+  const rows = [
+    ['Saldo na primeira leitura do dia', d.startEquity === null ? '—' : fmt(d.startEquity)],
+    ['Resultado realizado hoje', sinal(d.realized), cls(d.realized)],
+    ['Operações abertas hoje', `${d.trades}${l.maxTradesPerDay === null ? '' : ` de ${l.maxTradesPerDay}`}`],
+  ];
+  if (d.lossLimit !== null) {
+    const left = d.lossLimit + Math.min(0, d.realized);
+    rows.push(['Ainda pode perder hoje', left > 0 ? fmt(left) : 'nada: limite do dia atingido', left > 0 ? '' : 'down']);
+  }
+  grid($('dia'), rows);
+}
+
+function previewHtml(p) {
+  const v = p.preview;
+  if (!v) return '';
+  if (!v.ok) return `<span class="down">Se você aprovasse agora, a trava de risco não deixaria:</span> ${esc(v.reasons.join('; '))}`;
+  const base = S.account ? S.account.baseAsset : '';
+  return `Se você aprovar agora: compra de <b>${qtd(v.qty)} ${esc(base)}</b> (até <b>${fmt(v.notional)}</b> ${esc(S.account.asset)}), pagando no máximo ${fmt(v.entryLimit)}.`
+    + ` Perda máxima planejada: <b class="down">${fmt(v.maxLoss)}</b> (${fmt(v.maxLossPct)}% do saldo), limitada por: ${esc(LIMITE[v.limitedBy] || v.limitedBy)}.`
+    + ` <span class="muted">Prévia das ${hora(v.at)}; a conta é refeita na hora da aprovação.</span>`;
+}
+
+function renderPending() {
+  const box = $('pendentes');
+  const pend = S.proposals.filter((p) => p.status === 'pendente').reverse();
+  for (const [id, c] of cards) if (!pend.some((p) => p.id === id)) { c.el.remove(); cards.delete(id); }
+  let empty = box.querySelector('.empty');
+  if (!pend.length) {
+    if (!empty) box.innerHTML = '<div class="empty">Nenhuma proposta esperando. Quando houver, nada é enviado antes de você aprovar aqui.</div>';
+    return;
+  }
+  if (empty) empty.remove();
+  for (const p of pend) {
+    let c = cards.get(p.id);
+    if (!c) {
+      const el = document.createElement('div');
+      el.className = 'card wait';
+      el.innerHTML = `
+        <div class="top"><b>#${p.id}</b><span>Compra · stop <b>${fmt(p.stop)}</b>${p.target === null ? ' · sem alvo' : ` · alvo <b>${fmt(p.target)}</b>`}</span>
+          <span class="muted">${p.source === 'ia' ? 'proposta pela IA' : 'proposta manual'} às ${hora(p.createdAt)}</span><span class="muted" data-r="prazo"></span></div>
+        <div class="why">${esc(p.reason)}</div>
+        <div class="prev" data-r="prev"></div>
+        <div class="row">
+          <button data-act="approve" data-id="${p.id}" class="main"></button>
+          <button data-act="reject" data-id="${p.id}">Recusar</button>
+          <input type="text" data-r="nota" placeholder="anotação da recusa (opcional)" maxlength="500">
+        </div>`;
+      box.appendChild(el);
+      c = { el, prazo: el.querySelector('[data-r=prazo]'), prev: el.querySelector('[data-r=prev]'), nota: el.querySelector('[data-r=nota]'), ok: el.querySelector('[data-act=approve]') };
+      cards.set(p.id, c);
+    }
+    const left = Math.max(0, Math.round((p.expiresAt - S.time) / 1000));
+    c.prazo.textContent = `expira em ${Math.floor(left / 60)}min ${String(left % 60).padStart(2, '0')}s`;
+    setHtml(c.prev, previewHtml(p));
+    const on = isArmed(`approve-${p.id}`);
+    c.ok.textContent = on ? 'Confirmar: enviar ao Demo Mode' : 'Aprovar';
+    c.ok.className = on ? 'armed' : 'main';
+  }
+}
+
+function renderOpen() {
+  const live = S.proposals.filter((p) => LIVE.includes(p.status));
+  const box = $('aberta');
+  const alerta = live.filter((p) => p.status === 'atencao');
+  $('alerta').style.display = alerta.length ? 'block' : 'none';
+  $('alerta').textContent = alerta.length ? `ATENÇÃO na operação #${alerta[0].id}: ${alerta[0].note || ''} — confira a conta em demo.binance.com.` : '';
+  if (!live.length) { setHtml(box, '<div class="empty">Nenhuma posição aberta.</div>'); return; }
+  setHtml(box, live.map((p) => {
+    const rows = [];
+    if (p.entry) {
+      rows.push(['Comprado', `${qtd(p.entry.qty)} a ${fmt(p.entry.avg)} (${fmt(p.entry.quote)})`]);
+      rows.push(['Stop na corretora', fmt(p.plan.stop)], ['Alvo', p.plan.target === null ? 'sem alvo' : fmt(p.plan.target)]);
+      rows.push(['Perda se o stop sair no preço', fmt(p.riskAtFill), 'down']);
+      if (p.unrealized !== undefined) rows.push([`Se vendesse agora a ${fmt(p.priceNow)} (estimativa)`, sinal(p.unrealized), cls(p.unrealized)]);
+    }
+    const closing = isArmed(`close-${p.id}`);
+    return `<div class="card ${p.status === 'atencao' ? 'alert' : ''}">
+      <div class="top"><b>#${p.id}</b><span class="${p.status === 'atencao' ? 'down' : p.status === 'aberta' ? 'up' : 'accent'}">${esc(NOME[p.status])}${p.status === 'aberta' ? ' e com stop na corretora' : ''}</span>
+        <span class="muted">${p.openedAt ? `desde ${dataHora(p.openedAt)}` : ''}</span></div>
+      ${p.note ? `<div class="why down">${esc(p.note)}</div>` : ''}
+      <div class="why muted">${esc(p.reason)}</div>
+      <div class="grid" style="max-width: 460px">${rows.map(([k, v, c]) => `<span>${esc(k)}</span><b class="${c || ''}">${esc(v)}</b>`).join('')}</div>
+      <div class="row">
+        <button data-act="close" data-id="${p.id}" class="${closing ? 'armed' : 'danger'}">${closing ? 'Confirmar: vender a mercado' : 'Encerrar agora a mercado'}</button>
+        ${p.status === 'atencao' ? `<button data-act="retry" data-id="${p.id}">Tentar de novo</button>` : ''}
+      </div>
+    </div>`;
+  }).join(''));
+}
+
+function renderStats() {
+  const s = S.stats;
+  if (!s.trades) { setHtml($('stats'), '<span>Operações encerradas</span><b>0</b>'); return; }
+  // A ordem e a de importancia do projeto; a taxa de acerto vem por ultimo, de proposito.
+  grid($('stats'), [
+    ['Operações encerradas', String(s.trades)],
+    ['Resultado líquido', sinal(s.netTotal), cls(s.netTotal)],
+    ['Perda máxima (maior queda acumulada)', fmt(s.maxDrawdown), s.maxDrawdown > 0 ? 'down' : ''],
+    ['Pior operação', sinal(s.worstTrade), cls(s.worstTrade)],
+    ['Expectativa por operação', sinal(s.expectancy), cls(s.expectancy)],
+    ['R médio', s.avgR === null ? '—' : sinal(s.avgR), s.avgR === null ? '' : cls(s.avgR)],
+    ['Taxa de acerto', `${fmt(s.winRatePct, 0)}%`, 'muted'],
+  ]);
+}
+
+function renderHistory() {
+  const rest = S.proposals.filter((p) => p.status !== 'pendente' && !LIVE.includes(p.status));
+  setHtml($('historico'), rest.length ? rest.map((p) => {
+    const fim = p.status === 'fechada'
+      ? ` · ${esc(SAIDA[p.exitKind] || p.exitKind)} · <b class="${cls(p.net)}">${sinal(p.net)}</b>${p.result && p.result.r !== null ? ` (${sinal(p.result.r)} R)` : ''}`
+      : '';
+    const numeros = p.entry ? `comprou ${qtd(p.entry.qty)} a ${fmt(p.entry.avg)}${p.result && p.result.exitAvg ? `, vendeu a ${fmt(p.result.exitAvg)}` : ''} · ` : '';
+    return `<div class="op"><b>#${p.id}</b> ${dataHora(p.createdAt)} · ${esc(NOME[p.status] || p.status)}${fim}
+      <small>${numeros}stop ${fmt(p.stop)}${p.target === null ? '' : `, alvo ${fmt(p.target)}`} · ${esc(p.reason)}</small>
+      ${p.note ? `<small class="${p.status === 'recusada' ? '' : 'down'}">${esc(p.note)}</small>` : ''}</div>`;
+  }).join('') : '<div class="empty">Ainda não há propostas decididas.</div>');
+}
+
+function renderLog() {
+  const cor = { erro: 'down', decisao: 'accent', resultado: 'up', trava: 'accent' };
+  setHtml($('registro'), S.log.length ? S.log.map((l) =>
+    `<div class="log"><time>${dataHora(l.time)}</time>${l.proposalId ? `<b>#${l.proposalId}</b>` : ''}<span class="${cor[l.kind] || ''}">${esc(l.text)}</span></div>`).join('')
+    : '<div class="empty">Nada registrado ainda.</div>');
+}
+
+function render() {
+  if (!S) return;
+  renderLimits(); renderDemo(); renderDay(); renderPending(); renderOpen(); renderStats(); renderHistory(); renderLog();
+}
+
+document.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-act]');
+  if (!b) return;
+  const id = Number(b.dataset.id);
+  if (b.dataset.act === 'approve') twoStep(`approve-${id}`, () => act('/api/agent/approve', { id }));
+  else if (b.dataset.act === 'reject') act('/api/agent/reject', { id, note: cards.get(id) ? cards.get(id).nota.value : '' });
+  else if (b.dataset.act === 'close') twoStep(`close-${id}`, () => act('/api/agent/close', { id }));
+  else if (b.dataset.act === 'retry') act('/api/agent/retry', { id });
+});
+
+$('propor').onclick = async () => {
+  const sent = { stop: $('stop').value, alvo: $('alvo').value, motivo: $('motivo').value };
+  const mine = ++seq;
+  setMsg('');
+  $('propor').disabled = true;
+  try {
+    const s = await api('/api/agent/propose', { stop: sent.stop, target: sent.alvo, reason: sent.motivo });
+    // Limpa so o que foi enviado: se algo novo foi digitado enquanto isso, fica.
+    for (const id of ['stop', 'alvo', 'motivo']) if ($(id).value === sent[id]) $(id).value = '';
+    if (mine === seq) { S = s; render(); }
+  } catch (err) {
+    setMsg(err.message);
+  } finally {
+    $('propor').disabled = false;
+  }
+};
+
+// O servidor avisa quando algo muda; alem disso a tela confere a cada 5 segundos.
+const es = new EventSource('/api/stream');
+es.addEventListener('agent', load);
+setInterval(load, 5000);
+load();
+</script>
+</body>
+</html>

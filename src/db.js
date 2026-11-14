@@ -165,6 +165,57 @@ export async function openDb(file) {
       UNIQUE (symbol, time, title)
     );
     CREATE INDEX IF NOT EXISTS events_time ON events (symbol, time);
+
+    -- Fase 5. Propostas de operacao do agente. Uma proposta so vira ordem depois de aprovada
+    -- pelo Bruno e de passar pela trava de risco (src/risk.js).
+    CREATE TABLE IF NOT EXISTS agent_proposals (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol     TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      source     TEXT    NOT NULL,  -- quem propos: 'manual' (o Bruno, pela tela) ou 'ia'
+      side       TEXT    NOT NULL,  -- so 'buy': a conta e a vista
+      ref_price  REAL,              -- preco de mercado na hora da proposta (so referencia)
+      stop       REAL    NOT NULL,
+      target     REAL,              -- opcional
+      reason     TEXT    NOT NULL,  -- por que operar: toda proposta registra o motivo
+      status     TEXT    NOT NULL,  -- pendente, recusada, expirada, barrada, enviando, aberta,
+                                    -- fechando, fechada, falhou ou atencao (ver src/agent.js)
+      decided_at INTEGER,           -- quando o Bruno aprovou ou recusou
+      note       TEXT,              -- anotacao da decisao, ou o motivo da barrada / da falha
+      plan       TEXT,              -- JSON: o que a trava de risco calculou na aprovacao
+      exec       TEXT,              -- JSON: as ordens enviadas e o que executou
+      opened_at  INTEGER,           -- quando a compra executou
+      closed_at  INTEGER,           -- quando a posicao terminou
+      exit_kind  TEXT,              -- 'stop', 'alvo', 'manual', 'emergencia' ou 'poeira'
+      net        REAL               -- resultado liquido, em USDT (ja com as taxas)
+    );
+    CREATE INDEX IF NOT EXISTS agent_proposals_status ON agent_proposals (symbol, status);
+
+    -- Registro de tudo o que o agente fez e decidiu. So recebe linhas novas: os dois gatilhos
+    -- abaixo fazem o proprio banco recusar qualquer alteracao ou exclusao.
+    CREATE TABLE IF NOT EXISTS agent_log (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      time        INTEGER NOT NULL,
+      proposal_id INTEGER,
+      kind        TEXT    NOT NULL,  -- proposta, decisao, trava, ordem, erro, resultado ou sistema
+      text        TEXT    NOT NULL,
+      data        TEXT               -- JSON com os numeros daquele momento
+    );
+    CREATE INDEX IF NOT EXISTS agent_log_proposal ON agent_log (proposal_id, id);
+    CREATE TRIGGER IF NOT EXISTS agent_log_no_update BEFORE UPDATE ON agent_log
+      BEGIN SELECT RAISE(ABORT, 'o registro do agente nao pode ser alterado'); END;
+    CREATE TRIGGER IF NOT EXISTS agent_log_no_delete BEFORE DELETE ON agent_log
+      BEGIN SELECT RAISE(ABORT, 'o registro do agente nao pode ser apagado'); END;
+
+    -- Saldo da conta de demonstracao na primeira leitura de cada dia (UTC): e a base da perda
+    -- maxima do dia.
+    CREATE TABLE IF NOT EXISTS agent_days (
+      symbol       TEXT    NOT NULL,
+      day          TEXT    NOT NULL,  -- AAAA-MM-DD (UTC)
+      start_equity REAL    NOT NULL,
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (symbol, day)
+    ) WITHOUT ROWID;
   `);
 
   // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
@@ -324,6 +375,35 @@ export async function openDb(file) {
   const closesStmt = db.prepare('SELECT open_time AS openTime, close FROM candles WHERE symbol = ? AND closed = 1 ORDER BY open_time');
   const lastClosedStmt = db.prepare('SELECT MAX(open_time) AS t FROM candles WHERE symbol = ? AND closed = 1');
 
+  // ---------- Fase 5: agente ----------
+  const PROPOSAL_COLS = `id, symbol, created_at AS createdAt, source, side, ref_price AS refPrice, stop, target, reason,
+    status, decided_at AS decidedAt, note, plan, exec, opened_at AS openedAt, closed_at AS closedAt, exit_kind AS exitKind, net`;
+  // Toda proposta nasce 'pendente': o estado inicial nao vem de quem propoe.
+  const propInsStmt = db.prepare(`
+    INSERT INTO agent_proposals (symbol, created_at, source, side, ref_price, stop, target, reason, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente')
+  `);
+  const propGetStmt = db.prepare(`SELECT ${PROPOSAL_COLS} FROM agent_proposals WHERE id = ? AND symbol = ?`);
+  const propListStmt = db.prepare(`SELECT ${PROPOSAL_COLS} FROM agent_proposals WHERE symbol = ? ORDER BY id DESC LIMIT ?`);
+  const propClosedStmt = db.prepare(`
+    SELECT ${PROPOSAL_COLS} FROM agent_proposals WHERE symbol = ? AND status = 'fechada' ORDER BY closed_at, id
+  `);
+  // Campos de uma proposta que mudam depois de criada (o que foi proposto nunca muda).
+  const PROPOSAL_FIELDS = {
+    status: 'status', decidedAt: 'decided_at', note: 'note', plan: 'plan', exec: 'exec',
+    openedAt: 'opened_at', closedAt: 'closed_at', exitKind: 'exit_kind', net: 'net',
+  };
+  const logInsStmt = db.prepare('INSERT INTO agent_log (time, proposal_id, kind, text, data) VALUES (?, ?, ?, ?, ?)');
+  const logListStmt = db.prepare('SELECT id, time, proposal_id AS proposalId, kind, text, data FROM agent_log ORDER BY id DESC LIMIT ?');
+  const dayGetStmt = db.prepare('SELECT start_equity AS e FROM agent_days WHERE symbol = ? AND day = ?');
+  const daySetStmt = db.prepare('INSERT OR IGNORE INTO agent_days (symbol, day, start_equity, created_at) VALUES (?, ?, ?, ?)');
+  // Do dia: quantas operacoes abriram e quanto ja foi realizado (soma dos resultados liquidos).
+  const dayStatsStmt = db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM agent_proposals WHERE symbol = ? AND opened_at >= ? AND opened_at < ?) AS opened,
+      (SELECT COALESCE(SUM(net), 0) FROM agent_proposals WHERE symbol = ? AND closed_at >= ? AND closed_at < ?) AS realized
+  `);
+
   const tx = (fn) => {
     db.exec('BEGIN');
     try {
@@ -412,6 +492,29 @@ export async function openDb(file) {
     windowStats: (symbol, from, to) => windowStmt.get(symbol, from, to),
     closes: (symbol) => closesStmt.all(symbol),
     lastClosedTime: (symbol) => lastClosedStmt.get(symbol).t ?? null,
+
+    // ---------- Fase 5: agente ----------
+    agentAdd: (p) => Number(propInsStmt.run(
+      p.symbol, p.createdAt, p.source, p.side, p.refPrice ?? null, p.stop, p.target ?? null, p.reason,
+    ).lastInsertRowid),
+    agentGet: (symbol, id) => propGetStmt.get(id, symbol) ?? null,
+    agentList: (symbol, limit = 200) => propListStmt.all(symbol, limit),
+    agentClosed: (symbol) => propClosedStmt.all(symbol),
+    agentByStatus: (symbol, statuses) => db.prepare(
+      `SELECT ${PROPOSAL_COLS} FROM agent_proposals WHERE symbol = ? AND status IN (${statuses.map(() => '?').join(', ')}) ORDER BY id`,
+    ).all(symbol, ...statuses),
+    // So mexe nos campos de PROPOSAL_FIELDS; qualquer outro nome no `patch` e ignorado.
+    agentUpdate(id, patch) {
+      const keys = Object.keys(patch).filter((k) => k in PROPOSAL_FIELDS);
+      if (!keys.length) return;
+      db.prepare(`UPDATE agent_proposals SET ${keys.map((k) => `${PROPOSAL_FIELDS[k]} = ?`).join(', ')} WHERE id = ?`)
+        .run(...keys.map((k) => patch[k] ?? null), id);
+    },
+    agentLogAdd: (e) => logInsStmt.run(e.time, e.proposalId ?? null, e.kind, e.text, e.data ?? null),
+    agentLog: (limit = 300) => logListStmt.all(limit),
+    agentDayGet: (symbol, day) => dayGetStmt.get(symbol, day)?.e ?? null,
+    agentDaySet: (symbol, day, equity, createdAt) => daySetStmt.run(symbol, day, equity, createdAt),
+    agentDayStats: (symbol, from, to) => dayStatsStmt.get(symbol, from, to, symbol, from, to),
 
     close: () => db.close(),
   };

@@ -31,7 +31,8 @@ operação — não taxa de acerto.
    manual e importação; fonte automática ainda não escolhida — ver "Fase 4" abaixo)
 5. Agente conversando com o Bruno + ordens no Demo Mode
    (`https://demo-api.binance.com`), com limites de risco fixos em código que a IA
-   não altera, e registro de toda decisão
+   não altera, e registro de toda decisão (base FEITA em 14/11/2026 e testada só com
+   corretora simulada; faltam os limites, as chaves e a IA — ver "Fase 5" abaixo)
 
 ## Fase 1 — o que existe
 
@@ -278,10 +279,104 @@ conferências de ponta a ponta (a reação de três eventos igual a uma conta in
 janelas completas; evento antes do histórico; importação com linha ruim; duplicado;
 apagar). A tela foi exercitada pelo navegador automatizado; o Bruno ainda não usou.
 
-## Fase 5 — o que falta decidir antes de começar
+## Fase 5 — agente e ordens no Demo Mode
 
-A fase 5 (agente conversando com o Bruno e ordens só no Demo Mode) depende de decisões dele:
-- os limites de risco fixos em código (perda máxima por operação e por dia, tamanho máximo
-  da posição, quantas operações por dia);
-- as chaves de API do Demo Mode da Binance, que ele mesmo cria e coloca no arquivo `.env`
-  (já ignorado pelo git). Nunca usar chave da conta real neste projeto.
+A base está pronta e testada em 14/11/2026 (Windows 10, Node 22.20): propostas, aprovação do
+Bruno, trava de risco, ordens e registro. **Só foi testada contra uma corretora simulada:**
+sem as chaves, nenhuma ordem foi enviada ao Demo Mode de verdade. Falta a IA que conversa e
+propõe. Tela em http://localhost:3333/agente (há links nas outras telas).
+
+Decisão do Bruno (14/11/2026): **o agente propõe e o Bruno aprova cada ordem**, na tela.
+
+O que existe:
+- `src/limits.js` — os quatro limites de risco, fixos em código. **Estão todos `null`: quem
+  define os números é o Bruno.** Enquanto um deles estiver `null`, nenhuma ordem é enviada.
+- `src/risk.js` — a trava de risco (funções puras): confere a proposta e calcula o tamanho.
+- `src/demo.js` — cliente do Demo Mode; o único lugar que assina pedidos com chave.
+- `src/agent.js` — propostas, aprovação, execução (`settle`), registro e as rotas
+  `/api/agent/...`; evento `agent` no `/api/stream`.
+- `src/env.js` — lê o `.env` (`BINANCE_DEMO_KEY` e `BINANCE_DEMO_SECRET`); `.env.example`
+  mostra o formato.
+- `public/agente.html` — a tela: limites, conta, proposta manual, aprovar/recusar (em dois
+  cliques), posição aberta, resultado e registro.
+- Tabelas `agent_proposals`, `agent_log` e `agent_days` em `data/market.db`.
+- `scripts/testar-risco.js` (15 casos), `scripts/testar-demo.js` (17) e
+  `scripts/testar-agente.js` (34), com a corretora simulada de
+  `scripts/lib/corretora-simulada.js`. Rodar depois de mexer em qualquer arquivo da fase 5.
+
+Regras (não desfazer):
+- **Só Demo Mode.** O cliente recusa qualquer endereço que não seja
+  `https://demo-api.binance.com` (ou um servidor de teste em 127.0.0.1) e não segue
+  redirecionamento. As chaves vêm só do `.env` e nunca vão para log, tela ou mensagem de erro.
+- **Nenhuma ordem sai sem a aprovação do Bruno e sem passar pela trava.** Quem propõe não
+  aprova: `propose` só grava a proposta, sempre `pendente`; aprovar é outra rota, ligada ao
+  botão da tela. Quando a IA for ligada, ela recebe só a função de propor.
+- **Os limites só mudam editando `src/limits.js`.** Não há variável de ambiente, tela nem
+  comando que mude um limite.
+- **Só compra, sempre com stop, uma posição por vez** (conta à vista: sem venda a descoberto
+  e sem alavancagem).
+- **O tamanho é o menor entre** o que a perda máxima por operação permite, o que ainda cabe
+  na perda máxima do dia e o tamanho máximo da posição. A perda vai do preço máximo aceito
+  na compra até o stop, com as taxas dos dois lados.
+- **O preço para dimensionar e enviar vem do próprio Demo Mode, não do coletor.** O Demo Mode
+  tem livro de ofertas próprio (negócios e quantidades diferentes dos do mercado de verdade):
+  em 14/11/2026, em três leituras quase simultâneas, o BTCUSDT de lá estava de 0 a 7 dólares
+  diferente.
+- **A compra tem preço máximo** (a oferta de agora + `AGENT_MAX_SLIP_PCT` = 0,05%; executa na
+  hora o que houver e cancela o resto). É o teto da derrapagem na entrada.
+- **O stop é a mercado e fica parado na corretora** (junto com o alvo, numa lista OCO, quando
+  há alvo): a saída não depende de o programa estar ligado. Um stop com preço limite poderia
+  não executar numa queda rápida e deixar a posição aberta.
+- **Posição nunca fica sem stop:** se a corretora recusa o stop, ou ele some (cancelado por
+  fora), a posição é vendida a mercado na hora.
+- **Antes de enviar qualquer ordem, a intenção é gravada no banco**, com um nome único para a
+  ordem. Depois de uma queda, o agente pergunta à corretora o que existe com aqueles nomes e
+  continua dali; nunca repete uma ordem às cegas. O que não dá para confirmar vira o estado
+  `atencao`: aviso vermelho na tela, novas operações bloqueadas, e o agente tenta de novo sozinho.
+- **O registro (`agent_log`) só recebe linhas novas:** o próprio banco recusa alterar ou
+  apagar (gatilhos).
+- **O servidor só atende pedidos feitos a `localhost` ou `127.0.0.1`** (cabeçalho Host) e só
+  aceita JSON nas rotas que recebem dados: uma página de outro site não consegue aprovar nada.
+- Proposta sem decisão expira em `AGENT_PROPOSAL_TTL_MIN` = 15 minutos; a conta do tamanho é
+  refeita na hora da aprovação, com o saldo e o preço daquele momento.
+- O agente só começa a acompanhar depois que a porta do servidor abriu: um segundo
+  `npm start` termina sem mexer em nada.
+- Resumo na ordem do projeto: resultado líquido, perda máxima, pior operação, expectativa por
+  operação, R médio; a taxa de acerto por último.
+
+Limites conhecidos:
+- **A perda real pode passar da planejada** quando o preço pula o stop: o stop a mercado sai
+  pelo preço que houver. O registro mostra as duas contas.
+- **Resultado no Demo Mode não é resultado no mercado de verdade:** o livro é outro e a
+  liquidez é outra. A própria Binance avisa isso na documentação.
+- O saldo usado nos limites é o USDT da conta de demonstração mais a posição do agente;
+  outras moedas da conta não entram. A perda do dia conta só as operações do agente.
+- O dia (UTC) e o prazo das propostas usam o relógio do computador. Uma saída entra no dia
+  em que o agente ficou sabendo dela (se o programa estava desligado quando o stop executou,
+  é o dia em que voltou).
+- A aprovação está protegida contra páginas de outros sites, não contra outro programa
+  rodando neste computador.
+- Taxa cobrada em outra moeda (ex.: BNB) não entra no resultado; fica anotada.
+- Só o par do `SYMBOL`, só compra.
+
+Verificado: os 15 + 17 + 34 casos (entre eles: ciclo completo com alvo, com stop e com saída
+manual, com o resultado do agente conferido contra o saldo da corretora simulada; limites
+indefinidos ou falta de chaves não enviam nada; conexão caindo antes e depois de a ordem
+chegar; stop recusado; stop cancelado por fora; retomada por outro processo, só com o banco);
+15 conferências de ponta a ponta com o programa de verdade numa porta de teste (com os limites
+indefinidos, nenhuma ordem chega à corretora); e a tela exercitada pelo navegador
+automatizado, num servidor de teste com limites de teste. Contra o Demo Mode de verdade, só o
+que não precisa de chave: regras do par, preço, diferença de relógio e a recusa de uma chave
+inválida.
+
+**Não verificado (precisa das chaves do Bruno):** qualquer rota assinada no Demo Mode de
+verdade — saldo, compra, stop, lista OCO, cancelamento, taxas cobradas. A corretora simulada
+imita a documentação da Binance; o comportamento real só se confirma lá. A primeira operação
+de verdade no Demo Mode deve ser acompanhada passo a passo. O Bruno ainda não usou a tela.
+
+Falta, e depende do Bruno:
+- os quatro números de `src/limits.js`;
+- criar as chaves em demo.binance.com ("API Key Management") e colocá-las no `.env`. Nunca
+  usar chave da conta real neste projeto;
+- decidir como a IA entra (pela API da Anthropic, com chave dele e custo por uso, ou de
+  outra forma). Ela recebe só a função de propor.
