@@ -275,6 +275,35 @@ export async function fetchAggTrades(symbol, { fromId, startTime, endTime, limit
   }
 }
 
+// ---------- Fase 2: livro de ofertas ----------
+//
+// Foto do livro: os `limit` melhores niveis de cada lado ([preco, quantidade]) e o numero da
+// ultima atualizacao que ela contem.
+export async function fetchDepth(symbol, limit = 5000) {
+  const res = await fetch(`${REST_URL}/api/v3/depth?symbol=${symbol}&limit=${limit}`, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Binance respondeu ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const d = await res.json();
+  const num = (rows) => rows.map(([p, q]) => [+p, +q]);
+  return { lastUpdateId: d.lastUpdateId, bids: num(d.bids), asks: num(d.asks) };
+}
+
+// Atualizacoes do livro, uma por segundo. Cada uma traz so os niveis que mudaram, com a
+// quantidade nova (zero = o nivel saiu do livro). `U` e `u` sao a primeira e a ultima
+// atualizacao contidas na mensagem; a seguinte tem que comecar em `u + 1`.
+export function streamDepth(symbol, { onEvent, onOpen, onStatus, log }) {
+  const num = (rows) => rows.map(([p, q]) => [+p, +q]);
+  return openStream(`${WS_URL}/ws/${symbol.toLowerCase()}@depth`, 'livro', symbol, {
+    onOpen, onStatus, log,
+    onMessage: (m) => {
+      if (m?.e !== 'depthUpdate') return;
+      onEvent({ time: m.E, U: m.U, u: m.u, bids: num(m.b), asks: num(m.a) });
+    },
+  });
+}
+
 // Negocios ao vivo.
 export function streamAggTrades(symbol, { onTrade, onOpen, onStatus, log }) {
   return openStream(`${WS_URL}/ws/${symbol.toLowerCase()}@aggTrade`, 'negocios', symbol, {

@@ -1,4 +1,4 @@
-import { SYMBOL, PORT, BACKFILL_DAYS, DB_FILE, TRADES } from './config.js';
+import { SYMBOL, PORT, BACKFILL_DAYS, DB_FILE, TRADES, BOOK } from './config.js';
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 13)) {
@@ -106,10 +106,27 @@ if (TRADES) {
   });
 }
 
+// Fase 2: livro de ofertas, tambem em conexao propria.
+let book = null;
+if (BOOK) {
+  const { startBook } = await import('./book.js');
+  status.book = { live: false, synced: false };
+  book = startBook({
+    db, symbol: SYMBOL, log,
+    onStatus: (s) => {
+      status.book = s;
+      app.broadcastStatus();
+    },
+    onBook: (view) => app.broadcastBook(view),
+  });
+  app.attachBook(book);
+}
+
 process.on('SIGINT', () => {
   log('encerrando...');
   stop();
   trades?.stop();
+  book?.stop();
   app.server.close();
   db.close();
   process.exit(0);

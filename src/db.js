@@ -73,6 +73,44 @@ export async function openDb(file) {
       PRIMARY KEY (symbol, first_id)
     ) WITHOUT ROWID;
     CREATE INDEX IF NOT EXISTS big_orders_time ON big_orders (symbol, time);
+
+    -- Livro de ofertas, um resumo por segundo. b1..b6 = quantidade ofertada na COMPRA ate cada
+    -- faixa de distancia do preco medio; a1..a6 = idem na VENDA. As faixas estao em
+    -- BOOK_BANDS (src/book.js): 0,02%, 0,05%, 0,1%, 0,2%, 0,5% e 1%. NULL = a faixa passa do
+    -- trecho do livro que conhecemos.
+    CREATE TABLE IF NOT EXISTS book_1s (
+      symbol TEXT NOT NULL,
+      time   INTEGER NOT NULL,  -- o segundo, em ms (UTC)
+      bid    REAL NOT NULL,     -- melhor oferta de compra
+      ask    REAL NOT NULL,     -- melhor oferta de venda
+      b1 REAL, a1 REAL, b2 REAL, a2 REAL, b3 REAL, a3 REAL,
+      b4 REAL, a4 REAL, b5 REAL, a5 REAL, b6 REAL, a6 REAL,
+      PRIMARY KEY (symbol, time)
+    ) WITHOUT ROWID;
+
+    -- O mesmo resumo, em media por minuto. Fica para sempre.
+    CREATE TABLE IF NOT EXISTS book_1m (
+      symbol  TEXT NOT NULL,
+      time    INTEGER NOT NULL,  -- inicio do minuto, em ms (UTC)
+      samples INTEGER NOT NULL,  -- quantos segundos entraram na media (60 = minuto inteiro)
+      spread  REAL NOT NULL,     -- media de (venda - compra)
+      bid     REAL NOT NULL,     -- melhor compra e melhor venda no ultimo segundo do minuto
+      ask     REAL NOT NULL,
+      b1 REAL, a1 REAL, b2 REAL, a2 REAL, b3 REAL, a3 REAL,
+      b4 REAL, a4 REAL, b5 REAL, a5 REAL, b6 REAL, a6 REAL,
+      PRIMARY KEY (symbol, time)
+    ) WITHOUT ROWID;
+
+    -- Maiores ofertas paradas no livro ("paredes"), de 10 em 10 segundos.
+    CREATE TABLE IF NOT EXISTS book_walls (
+      symbol TEXT NOT NULL,
+      time   INTEGER NOT NULL,
+      is_bid INTEGER NOT NULL,  -- 1 = oferta de compra; 0 = oferta de venda
+      rank   INTEGER NOT NULL,  -- 1 = a maior daquele lado naquele instante
+      price  REAL NOT NULL,
+      qty    REAL NOT NULL,
+      PRIMARY KEY (symbol, time, is_bid, rank)
+    ) WITHOUT ROWID;
   `);
 
   // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
@@ -174,6 +212,21 @@ export async function openDb(file) {
     ORDER BY time DESC, first_id DESC LIMIT ?
   `);
 
+  // ---------- Fase 2: livro de ofertas ----------
+  const BANDS_SQL = 'b1, a1, b2, a2, b3, a3, b4, a4, b5, a5, b6, a6';
+  const bookStmt = db.prepare(`
+    INSERT OR REPLACE INTO book_1s (symbol, time, bid, ask, ${BANDS_SQL}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const bookMinStmt = db.prepare(`
+    INSERT OR REPLACE INTO book_1m (symbol, time, samples, spread, bid, ask, ${BANDS_SQL})
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const wallStmt = db.prepare('INSERT OR REPLACE INTO book_walls (symbol, time, is_bid, rank, price, qty) VALUES (?, ?, ?, ?, ?, ?)');
+  const deleteBookStmt = db.prepare('DELETE FROM book_1s WHERE symbol = ? AND time < ?');
+  const deleteWallsStmt = db.prepare('DELETE FROM book_walls WHERE symbol = ? AND time < ?');
+  // Intercala compra e venda de cada faixa, na ordem das colunas (b1, a1, b2, a2, ...).
+  const bands = (r) => r.b.flatMap((v, i) => [v, r.a[i]]);
+
   const tx = (fn) => {
     db.exec('BEGIN');
     try {
@@ -226,6 +279,16 @@ export async function openDb(file) {
       o.symbol, o.firstId, o.lastId, o.time, o.takerBuy ? 1 : 0, o.qty, o.quote, o.priceFirst, o.priceLast, o.prints,
     ),
     bigRecent: (symbol, minQuote, beforeTime, limit) => bigRecentStmt.all(symbol, minQuote, beforeTime, limit),
+
+    // `r.b` e `r.a` sao as quantidades por faixa (compra e venda), na ordem de BOOK_BANDS.
+    insertBook: (r) => bookStmt.run(r.symbol, r.time, r.bid, r.ask, ...bands(r)),
+    insertBookMinute: (r) => bookMinStmt.run(r.symbol, r.time, r.samples, r.spread, r.bid, r.ask, ...bands(r)),
+    insertWalls: (symbol, time, walls) => tx(() => {
+      walls.bids.forEach((w, i) => wallStmt.run(symbol, time, 1, i + 1, w.price, w.qty));
+      walls.asks.forEach((w, i) => wallStmt.run(symbol, time, 0, i + 1, w.price, w.qty));
+    }),
+    deleteBookBefore: (symbol, time) =>
+      Number(deleteBookStmt.run(symbol, time).changes) + Number(deleteWallsStmt.run(symbol, time).changes),
 
     close: () => db.close(),
   };

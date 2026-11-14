@@ -58,9 +58,24 @@ Na tela: embaixo do grafico, o saldo de agressao de cada candle (barras) e o acu
 (linha); ao lado, a lista de ordens grandes, que tambem aparecem como setas nos candles.
 
 Os negocios crus ocupam de 50 MB (dia medio) a 250 MB (dia muito agitado) por dia e sao
-apagados depois de 7 dias; o fluxo por minuto e as ordens grandes ficam para sempre. `TRADES=0 npm start` desliga essa parte.
+apagados depois de 7 dias; o fluxo por minuto e as ordens grandes ficam para sempre.
+`TRADES=0 npm start` desliga essa parte.
+
+## Fase 2: livro de ofertas
+
+O `npm start` tambem mantem uma copia local do livro de ofertas e grava um resumo por segundo:
+melhor compra, melhor venda e a quantidade ofertada de cada lado ate 0,02%, 0,05%, 0,1%, 0,2%,
+0,5% e 1% do preco, mais as maiores ofertas.
+
+- `http://localhost:3333/api/book` - o livro agora.
+- `http://localhost:3333/api/book/check` - compara o livro local, nivel a nivel, com uma foto
+  nova da Binance (o programa tambem faz isso sozinho a cada 10 minutos).
+
+Custa cerca de 1,3 GB de trafego de internet por dia e uns 12 MB de disco por dia (guardados
+por 14 dias; a media por minuto fica para sempre). `BOOK=0 npm start` desliga essa parte.
 
 ## Variaveis de ambiente
 
 `SYMBOL`, `PORT`, `BACKFILL_DAYS`, `BINANCE_REST`, `BINANCE_WS`, `TRADES`, `TRADES_KEEP_DAYS`,
-`TRADES_BACKFILL_HOURS`, `TRADES_MAX_GAP_HOURS`, `BIG_ORDER_USDT` (ver `src/config.js`).
+`TRADES_BACKFILL_HOURS`, `TRADES_MAX_GAP_HOURS`, `BIG_ORDER_USDT`, `BOOK`, `BOOK_KEEP_DAYS`
+(ver `src/config.js`).

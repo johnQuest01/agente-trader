@@ -23,6 +23,8 @@
 //      candles (volume, agressao compradora e numero de negocios tem que bater exatamente em
 //      todo minuto marcado como completo); amostra de negocios crus x Binance; ordens grandes
 //      recalculadas a partir dos negocios crus.
+//   6. Fase 2, livro de ofertas (se houver): coerencia dos resumos por segundo e, com o
+//      servidor rodando, o livro local comparado nivel a nivel com uma foto nova da Binance.
 //
 // Teste de retomada (parar, esperar, subir de novo) e manual: rode este script antes e depois;
 // a contagem deve crescer so pelos minutos que passaram, sem buraco e sem duplicado.
@@ -386,6 +388,48 @@ if (!neg.n) {
   if (ordensRuins || refeitas.size) {
     falhas++;
     for (const r of [...refeitas.values()].slice(0, 5)) console.log(`   falta: ${hms(r.time)} UTC  ${r.quote.toFixed(0)} USDT`);
+  }
+}
+
+// ---------- 6. fase 2: livro de ofertas ----------
+console.log('\n== 6. livro de ofertas (fase 2) ==');
+const temLivro = db.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type = 'table' AND name = 'book_1s'").get().n;
+const liv = temLivro ? db.prepare('SELECT COUNT(*) n, MIN(time) f, MAX(time) l FROM book_1s WHERE symbol = ?').get(SYMBOL) : { n: 0 };
+if (!liv.n) {
+  console.log('sem livro no banco (gravador desligado, ou ainda nao rodou)');
+} else {
+  console.log(`resumos por segundo: ${liv.n}  de ${iso(liv.f)} a ${iso(liv.l)} UTC`);
+  // Coerencia de cada linha: compra abaixo da venda, e as faixas sao cumulativas (a de 0,05%
+  // contem a de 0,02%, e assim por diante), entao a soma nunca diminui de uma para a outra.
+  const incoerentes = db.prepare(`
+    SELECT COUNT(*) n FROM book_1s WHERE symbol = ? AND (
+      bid >= ask OR b1 < 0 OR a1 < 0
+      OR b1 > b2 OR b2 > b3 OR b3 > b4 OR b4 > b5 OR b5 > b6
+      OR a1 > a2 OR a2 > a3 OR a3 > a4 OR a4 > a5 OR a5 > a6)
+  `).get(SYMBOL).n;
+  console.log(`linhas incoerentes (compra >= venda, ou faixa maior com soma menor): ${incoerentes} ${incoerentes ? '<< ERRO' : 'OK'}`);
+  if (incoerentes) falhas++;
+  // Pausas: trechos sem resumo (programa parado, reconexao ou livro sendo refeito).
+  const pausas = db.prepare(`
+    SELECT COUNT(*) n, COALESCE(SUM(d), 0) s FROM (
+      SELECT time - LAG(time) OVER (ORDER BY time) d FROM book_1s WHERE symbol = ?
+    ) WHERE d > 3000
+  `).get(SYMBOL);
+  console.log(`pausas de mais de 3 s: ${pausas.n} (${Math.round(pausas.s / 1000)} s no total; ${((liv.l - liv.f) / 1000 + 1).toFixed(0)} s de periodo)`);
+  const minutos = db.prepare('SELECT COUNT(*) n, SUM(samples) s FROM book_1m WHERE symbol = ?').get(SYMBOL);
+  console.log(`medias por minuto: ${minutos.n} minutos, ${minutos.s ?? 0} segundos somados`);
+  const paredes = db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT time) t FROM book_walls WHERE symbol = ?').get(SYMBOL);
+  console.log(`maiores ofertas: ${paredes.n} linhas em ${paredes.t} instantes`);
+  // A prova: o servidor compara o livro local, nivel a nivel, com uma foto nova da Binance,
+  // e refaz as somas por faixa por outro caminho.
+  if (!SEM_API) {
+    try {
+      const r = await (await fetch(`${API}/api/book/check`, { signal: AbortSignal.timeout(40_000) })).json();
+      if (r.ok) console.log(`livro local x foto nova da Binance: ${r.levels} niveis e somas conferidos, 0 diferentes`);
+      else falha(`livro local diferente da Binance: ${r.reason ?? `${r.different} de ${r.levels}`} ${(r.examples ?? []).join('; ')}`);
+    } catch (err) {
+      falha(`nao consegui pedir a conferencia do livro ao servidor (${err.message})`);
+    }
   }
 }
 

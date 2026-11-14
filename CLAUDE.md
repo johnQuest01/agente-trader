@@ -22,7 +22,8 @@ operação — não taxa de acerto.
 
 1. **Coletor e gráfico** (TESTADO na máquina do Bruno em 14/11/2026 — ver abaixo)
 2. Fluxo e métricas: aggTrades (agressão compradora x vendedora), negócios grandes
-   ("baleias"), livro de ofertas gravado ao vivo (EM ANDAMENTO — ver "Fase 2" abaixo)
+   ("baleias"), livro de ofertas gravado ao vivo (FEITO e testado em 14/11/2026; falta
+   rodar por vários dias — ver "Fase 2" abaixo)
 3. Modo replay: reproduzir um dia passado candle a candle; registrar a previsão ANTES
    de revelar o resultado
 4. Tabela de eventos/notícias com horário exato, ligada ao gráfico (estudo de eventos:
@@ -117,10 +118,10 @@ Pendências conhecidas (não bloqueiam a fase 2):
   de reprodução (dela e das quedas de conexão) não estão no repositório.
 - O desenho da vela ao vivo foi conferido pelos dados, não olhando a tela.
 
-## Fase 2 — fluxo e métricas (em andamento)
+## Fase 2 — fluxo e métricas
 
-Pronto e testado em 14/11/2026 (Windows 10, Node 22.20): a base de dados e a tela. Falta
-o livro de ofertas.
+Pronto e testado em 14/11/2026 (Windows 10, Node 22.20): negócios, fluxo, ordens grandes,
+livro de ofertas e a tela. Falta rodar por vários dias.
 
 O que existe:
 - `src/trades.js` — coletor de negócios agregados (aggTrades) em conexão própria, separada
@@ -158,6 +159,23 @@ Regras (não desfazer):
   negócio pertence, e duas ordens diferentes no mesmo milissegundo saem somadas.
 - `taker_buy = 1` quer dizer que o COMPRADOR agrediu (é o contrário do campo `m` da Binance).
 
+Livro de ofertas (`src/book.js`, em conexão própria; `BOOK=0` desliga):
+- O livro local é montado como a Binance manda: uma foto de 5.000 níveis por lado (uns
+  ±2,4% do preço no BTCUSDT) mais as atualizações numeradas que chegam uma vez por segundo.
+  **Se falta um número, o livro é refeito do zero**; se compra e venda se cruzam, também.
+- **A cada 10 minutos o livro local é comparado nível a nível com uma foto nova** (e as
+  somas por faixa são refeitas por outro caminho). `/api/book/check` faz isso na hora, e o
+  validador chama. É a prova de que o livro local continua igual ao da Binance.
+- Gravado: `book_1s` (um resumo por segundo: melhor compra, melhor venda e a quantidade
+  ofertada de cada lado até 0,02%, 0,05%, 0,1%, 0,2%, 0,5% e 1% do preço; `BOOK_KEEP_DAYS` =
+  14 dias, uns 12 MB por dia), `book_1m` (a média por minuto, para sempre) e `book_walls`
+  (as 5 maiores ofertas de cada lado até 1% do preço, de 10 em 10 s, 14 dias).
+- Uma faixa que passa do trecho conhecido do livro fica `NULL`, em vez de uma soma incompleta.
+- **Custo de tráfego: cerca de 1,3 GB por dia** só do livro (15 KB por segundo). A opção de
+  100 ms custaria 5,9 GB por dia e não é usada.
+- `/api/book` (o livro agora) e evento `book` no `/api/stream`; na tela, caixa "Livro de
+  ofertas" com as faixas de 0,05%, 0,1% e 0,5% e a maior oferta de cada lado.
+
 Verificado: retomada depois de ficar parado (26 mil negócios baixados em 12 s, sem buraco);
 queda da conexão ao vivo de candles e de negócios ao mesmo tempo (simulada); em todos os
 casos os minutos completos bateram exatamente com os candles, a amostra de 3.000 negócios
@@ -166,5 +184,11 @@ crus bateu com a Binance e todas as ordens grandes conferiram com o recálculo.
 A tela foi conferida pelos dados (saldo e acumulado iguais ao cálculo feito a partir da API,
 gráficos sincronizados, setas e lista de acordo com `/api/big`), não por alguém olhando.
 
-Falta na fase 2: livro de ofertas gravado ao vivo; rodar vários dias para conferir a
-limpeza dos negócios antigos e o tamanho real do banco; o Bruno olhar a tela nova.
+Livro verificado: em todas as conferências feitas (antes e depois de uma queda simulada da
+conexão), cerca de 10 mil níveis comparados com a Binance e nenhum diferente; o salto de
+numeração na reconexão foi detectado e o livro foi refeito sozinho.
+
+Falta na fase 2: rodar vários dias para conferir a limpeza dos dados antigos, o tamanho
+real do banco e as conferências automáticas do livro ao longo do tempo; o Bruno olhar a
+tela nova. O disco do computador tinha 25 GB livres de 447 GB em 14/11/2026: com os
+padrões, a fase 2 ocupa de 0,5 a 2 GB.

@@ -32,6 +32,14 @@ export const TRADES_MAX_GAP_HOURS = Number(process.env.TRADES_MAX_GAP_HOURS || 2
 // Piso, em USDT, para gravar uma ordem agressora como "grande". A tela filtra dali para cima.
 export const BIG_ORDER_USDT = Number(process.env.BIG_ORDER_USDT || 25_000);
 
+// ---------- Fase 2: livro de ofertas ----------
+// BOOK=0 desliga o gravador do livro. Ele recebe uma atualizacao por segundo com todos os
+// niveis que mudaram: cerca de 15 KB por segundo, ou 1,3 GB de trafego por dia no BTCUSDT.
+export const BOOK = process.env.BOOK !== '0';
+// Por quantos dias o resumo por segundo e as maiores ofertas ficam no banco (uns 12 MB por
+// dia). A media por minuto fica para sempre.
+export const BOOK_KEEP_DAYS = Number(process.env.BOOK_KEEP_DAYS || 14);
+
 // Guardamos so candles de 1 minuto; os outros tempos sao calculados a partir deles.
 export const TIMEFRAMES = {
   '1m': 1 * MINUTE,

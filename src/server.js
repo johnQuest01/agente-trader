@@ -8,6 +8,7 @@ const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
 
 export function startServer({ db, symbol, port, getStatus }) {
   const clients = new Set();
+  let book = null; // gravador do livro de ofertas (fase 2), ligado depois por attachBook
 
   const json = (res, code, body) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -76,6 +77,18 @@ export function startServer({ db, symbol, port, getStatus }) {
         return json(res, 200, db.bigRecent(symbol, min, to, limit));
       }
 
+      // Fase 2. Livro de ofertas agora: melhor compra e venda, quantidade ofertada em cada
+      // faixa de distancia do preco e as maiores ofertas. null = ainda sem livro.
+      if (url.pathname === '/api/book') {
+        return json(res, 200, book ? book.view() : null);
+      }
+
+      // Fase 2. Compara agora o livro local, nivel a nivel, com uma foto nova da Binance.
+      if (url.pathname === '/api/book/check') {
+        if (!book) return json(res, 200, { ok: false, reason: 'gravador do livro desligado' });
+        return json(res, 200, await book.check());
+      }
+
       if (url.pathname === '/api/stream') {
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -121,5 +134,7 @@ export function startServer({ db, symbol, port, getStatus }) {
     broadcastStatus: () => send('status', getStatus()),
     broadcastFlow: (flow) => send('flow', flow), // fluxo do minuto em formacao
     broadcastBig: (order) => send('big', order), // ordem agressora grande que acabou de sair
+    broadcastBook: (view) => send('book', view), // resumo do livro, uma vez por segundo
+    attachBook: (b) => { book = b; },
   };
 }

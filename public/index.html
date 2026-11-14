@@ -54,6 +54,14 @@
   #biglist .row small { color: var(--muted); }
   #biglist .none { padding: 14px 12px; color: var(--muted); }
   #big .foot { padding: 6px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+  #big .head small { color: var(--muted); font-weight: 400; font-size: 11px; }
+  #bookbox { display: none; border-bottom: 1px solid var(--line); }
+  #book { padding: 6px 12px 9px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #book .faixa { display: grid; grid-template-columns: 58px 1fr; gap: 8px; align-items: center; margin-top: 6px; }
+  #book .barra { height: 12px; background: var(--down); border-radius: 3px; overflow: hidden; }
+  #book .barra i { display: block; height: 100%; background: var(--up); }
+  #book .nums { grid-column: 2; display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin-top: -4px; }
+  #book .parede { color: var(--muted); font-size: 11px; margin-top: 7px; }
   @media (max-width: 900px) { #big { display: none; } }
   #empty {
     position: fixed; inset: 0; display: none; place-items: center; text-align: center;
@@ -85,6 +93,10 @@
     </div>
   </div>
   <aside id="big">
+    <div id="bookbox">
+      <div class="head"><span>Livro de ofertas</span><small id="spread"></small></div>
+      <div id="book"></div>
+    </div>
     <div class="head">
       <span>Ordens grandes</span>
       <select id="bigmin" title="Valor mínimo da ordem">
@@ -374,6 +386,35 @@ function onBig(o) {
   if (!bigTimer) bigTimer = setTimeout(() => { bigTimer = null; renderBig(); }, 500);
 }
 
+// ---------- livro de ofertas (fase 2) ----------
+// Para cada faixa de distancia do preco, quanto ha ofertado para compra (verde) e para venda
+// (vermelho). O servidor manda o resumo uma vez por segundo.
+const BOOK_SHOW = [0.0005, 0.001, 0.005]; // faixas mostradas: 0,05%, 0,1% e 0,5% do preco
+function renderBook(v) {
+  if (!v) return;
+  $('bookbox').style.display = 'block';
+  $('spread').textContent = v.synced ? `diferença ${fmt(v.ask - v.bid)}` : 'sincronizando…';
+  const el = $('book');
+  el.textContent = '';
+  const div = (cls, text) => { const d = document.createElement('div'); d.className = cls; if (text) d.textContent = text; return d; };
+  for (const band of v.bands) {
+    if (!BOOK_SHOW.includes(band.pct) || band.bid === null || band.ask === null) continue;
+    const linha = div('faixa');
+    const barra = div('barra');
+    const verde = document.createElement('i');
+    verde.style.width = (band.bid + band.ask ? (band.bid / (band.bid + band.ask)) * 100 : 50) + '%';
+    barra.appendChild(verde);
+    linha.append(div('', `até ${fmt(band.pct * 100, 2)}%`), barra);
+    const nums = div('nums');
+    nums.append(div('up', `${fmt(band.bid, 1)} compra`), div('down', `venda ${fmt(band.ask, 1)}`));
+    linha.appendChild(nums);
+    el.appendChild(linha);
+  }
+  const maior = (w) => (w ? `${fmt(w.qty, 2)} em ${fmt(w.price)}` : '—');
+  el.appendChild(div('parede', `Maior oferta de compra: ${maior(v.walls.bids[0])}`));
+  el.appendChild(div('parede', `Maior oferta de venda: ${maior(v.walls.asks[0])}`));
+}
+
 $('bigmin').value = String(bigMin);
 if ($('bigmin').value !== String(bigMin)) { bigMin = 100000; $('bigmin').value = '100000'; }
 $('bigmin').onchange = () => {
@@ -401,6 +442,7 @@ function connect() {
   es.addEventListener('candle', (e) => onCandle(JSON.parse(e.data)));
   es.addEventListener('status', (e) => onStatus(JSON.parse(e.data)));
   es.addEventListener('big', (e) => onBig(JSON.parse(e.data)));
+  es.addEventListener('book', (e) => renderBook(JSON.parse(e.data)));
   es.onopen = () => {
     if (!dropped) return;
     dropped = false;
@@ -423,6 +465,7 @@ async function init() {
   connect();    // liga o ao vivo antes da carga: o que chegar durante ela fica na fila
   await load();
   loadBig();
+  fetch('/api/book').then((r) => (r.ok ? r.json() : null)).then(renderBook).catch(() => {});
 }
 init();
 </script>
