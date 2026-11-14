@@ -1,0 +1,13 @@
+{
+  "name": "agente-trader",
+  "version": "0.1.0",
+  "description": "Laboratorio de trading: coletor de candles da Binance, banco local e grafico",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agente Trader · Laboratório</title>
+<script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d1014; --panel: #151a21; --line: #232a34; --text: #d7dde5; --muted: #7d8896;
+    --up: #2ebd85; --down: #f6465d; --accent: #f0b90b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  .pair { font-weight: 700; font-size: 16px; letter-spacing: .02em; }
+  .price { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .tfs { display: flex; gap: 4px; }
+  .tfs button {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    padding: 5px 10px; border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  .tfs button:hover { color: var(--text); }
+  .tfs button.on { color: #111; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  .stats { display: flex; flex-wrap: wrap; gap: 18px; margin-left: auto; }
+  .stat { display: flex; flex-direction: column; }
+  .stat span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat b { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--down); }
+  .dot.live { background: var(--up); }
+  .dot.fill { background: var(--accent); }
+  #chart { flex: 1; min-height: 0; }
+  #empty {
+    position: fixed; inset: 0; display: none; place-items: center; text-align: center;
+    color: var(--muted); pointer-events: none; padding: 24px;
+  }
+  .bar { height: 4px; width: 90px; background: var(--down); border-radius: 2px; overflow: hidden; margin-top: 5px; }
+  .bar i { display: block; height: 100%; background: var(--up); width: 50%; }
+</style>
+</head>
+<body>
+<header>
+  <div class="pair" id="pair">—</div>
+  <div class="price" id="price">—</div>
+  <div class="tfs" id="tfs"></div>
+  <div class="stats">
+    <div class="stat"><span>Variação do candle</span><b id="chg">—</b></div>
+    <div class="stat"><span>Volume do candle</span><b id="vol">—</b></div>
+    <div class="stat"><span>Agressão compradora</span><b id="buy">—</b><div class="bar"><i id="buybar"></i></div></div>
+    <div class="status"><div class="dot" id="dot"></div><span id="st">conectando…</span></div>
+  </div>
+</header>
+<div id="chart"></div>
+<div id="empty">Ainda sem dados. O histórico está sendo baixado; a página atualiza sozinha.</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const tzShift = new Date().getTimezoneOffset() * 60; // mostra o horario local do computador
+const toTime = (ms) => Math.floor(ms / 1000) - tzShift;
+const UP = '#2ebd85', DOWN = '#f6465d';
+const TF_MS = { '1m': 60e3, '5m': 300e3, '15m': 900e3, '1h': 3600e3, '4h': 14400e3, '1d': 86400e3 };
+
+let tf = localStorage.getItem('tf') || '1m';
+if (!TF_MS[tf]) tf = '1m';
+let lastBar = null;      // ultimo candle do tempo grafico atual
+let lastPrice = null;
+let loading = false;
+
+const chart = LightweightCharts.createChart($('chart'), {
+  autoSize: true,
+  layout: { background: { color: '#0d1014' }, textColor: '#9aa4b1' },
+  grid: { vertLines: { color: '#1a2029' }, horzLines: { color: '#1a2029' } },
+  rightPriceScale: { borderColor: '#232a34' },
+  timeScale: { borderColor: '#232a34', timeVisible: true, secondsVisible: false },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+});
+const candles = chart.addCandlestickSeries({
+  upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN,
+});
+const volume = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '' });
+volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const cBar = (c) => ({ time: toTime(c.openTime), open: c.open, high: c.high, low: c.low, close: c.close });
+const vBar = (c) => ({ time: toTime(c.openTime), value: c.volume, color: (c.close >= c.open ? UP : DOWN) + '80' });
+
+function showStats(c) {
+  if (!c) return;
+  const pct = c.open ? ((c.close - c.open) / c.open) * 100 : 0;
+  $('chg').textContent = (pct >= 0 ? '+' : '') + fmt(pct) + '%';
+  $('chg').className = pct >= 0 ? 'up' : 'down';
+  $('vol').textContent = fmt(c.volume, 3);
+  const buy = c.volume ? (c.takerBuyVolume / c.volume) * 100 : 50;
+  $('buy').textContent = fmt(buy, 1) + '%';
+  $('buybar').style.width = buy + '%';
+}
+
+function showPrice(p) {
+  const el = $('price');
+  el.textContent = fmt(p);
+  if (lastPrice !== null && p !== lastPrice) el.className = 'price ' + (p > lastPrice ? 'up' : 'down');
+  lastPrice = p;
+  document.title = fmt(p) + ' · ' + $('pair').textContent;
+}
+
+async function load() {
+  loading = true;
+  try {
+    const rows = await (await fetch(`/api/candles?tf=${tf}&limit=1500`)).json();
+    $('empty').style.display = rows.length ? 'none' : 'grid';
+    candles.setData(rows.map(cBar));
+    volume.setData(rows.map(vBar));
+    lastBar = rows.at(-1) || null;
+    if (lastBar) { showStats(lastBar); showPrice(lastBar.close); }
+    chart.timeScale().scrollToRealTime();
+  } finally {
+    loading = false;
+  }
+}
+
+// Atualiza so a ponta do grafico (os 2 ultimos candles) para tempos maiores que 1m.
+let tailTimer = null;
+function refreshTail() {
+  if (tailTimer) return;
+  tailTimer = setTimeout(async () => {
+    tailTimer = null;
+    if (loading) return;
+    const asked = tf;
+    const rows = await (await fetch(`/api/candles?tf=${asked}&limit=2`)).json();
+    if (asked !== tf) return;
+    for (const r of rows) {
+      if (lastBar && r.openTime < lastBar.openTime) continue;
+      candles.update(cBar(r)); volume.update(vBar(r)); lastBar = r;
+    }
+    showStats(lastBar);
+  }, 1500);
+}
+
+function onCandle(c) {
+  showPrice(c.close);
+  if (loading) return;
+  if (tf === '1m') {
+    if (lastBar && c.openTime < lastBar.openTime) return;
+    candles.update(cBar(c)); volume.update(vBar(c)); lastBar = c; showStats(c);
+    $('empty').style.display = 'none';
+  } else {
+    refreshTail();
+  }
+}
+
+function onStatus(s) {
+  const dot = $('dot');
+  dot.className = 'dot' + (s.backfilling ? ' fill' : s.live ? ' live' : '');
+  $('st').textContent = s.backfilling ? 'baixando histórico…' : s.live ? 'ao vivo' : 'desconectado';
+  if (wasFilling && !s.backfilling) load(); // historico terminou: recarrega tudo
+  wasFilling = s.backfilling;
+}
+let wasFilling = false;
+
+function buildTfs() {
+  $('tfs').innerHTML = '';
+  for (const k of Object.keys(TF_MS)) {
+    const b = document.createElement('button');
+    b.textContent = k;
+    b.className = k === tf ? 'on' : '';
+    b.onclick = () => { tf = k; localStorage.setItem('tf', k); buildTfs(); load(); };
+    $('tfs').appendChild(b);
+  }
+}
+
+async function init() {
+  const info = await (await fetch('/api/info')).json();
+  $('pair').textContent = info.symbol.replace('USDT', '/USDT');
+  buildTfs();
+  onStatus(info);
+  await load();
+  const es = new EventSource('/api/stream');
+  es.addEventListener('candle', (e) => onCandle(JSON.parse(e.data)));
+  es.addEventListener('status', (e) => onStatus(JSON.parse(e.data)));
+  es.onerror = () => { $('dot').className = 'dot'; $('st').textContent = 'servidor parado'; };
+}
+init();
+</script>
+</body>
+</html>
