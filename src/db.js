@@ -247,6 +247,31 @@ export async function openDb(file) {
       BEGIN SELECT RAISE(ABORT, 'as mensagens da conversa com a IA nao podem ser alteradas'); END;
     CREATE TRIGGER IF NOT EXISTS ai_messages_no_delete BEFORE DELETE ON ai_messages
       BEGIN SELECT RAISE(ABORT, 'as mensagens da conversa com a IA nao podem ser apagadas'); END;
+
+    -- Caderno do Bruno: anotacoes e previsoes. A hora e o minuto de referencia sao carimbados
+    -- pelo servidor na gravacao, e a linha nao pode ser alterada nem apagada: e isso que da
+    -- valor a conferencia feita depois (uma previsao errada que pudesse ser apagada nao
+    -- contaria no placar).
+    CREATE TABLE IF NOT EXISTS notes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol      TEXT    NOT NULL,
+      time        INTEGER NOT NULL,  -- quando foi escrita (relogio do computador), em ms (UTC)
+      text        TEXT    NOT NULL,
+      kind        TEXT    NOT NULL,  -- assunto, em texto livre
+      side        TEXT,              -- 'alta', 'baixa' ou NULL (anotacao sem previsao)
+      horizon_min INTEGER,           -- prazo da conferencia, em minutos (NULL sem previsao)
+      source      TEXT,
+      -- Abertura do candle de 1m que estava em formacao na gravacao. O preco de referencia e o
+      -- FECHAMENTO dele: um preco que ainda nao existia quando a anotacao foi gravada. Por isso
+      -- ele nao e guardado aqui: sai da tabela de candles quando o minuto fecha.
+      ref_time    INTEGER,
+      seen_price  REAL               -- o preco que estava na tela na hora (so informativo)
+    );
+    CREATE INDEX IF NOT EXISTS notes_time ON notes (symbol, time);
+    CREATE TRIGGER IF NOT EXISTS notes_no_update BEFORE UPDATE ON notes
+      BEGIN SELECT RAISE(ABORT, 'uma anotacao do caderno nao pode ser alterada'); END;
+    CREATE TRIGGER IF NOT EXISTS notes_no_delete BEFORE DELETE ON notes
+      BEGIN SELECT RAISE(ABORT, 'uma anotacao do caderno nao pode ser apagada'); END;
   `);
 
   // Um candle gravado nunca anda para tras. O historico (REST) e o fluxo ao vivo (WebSocket)
@@ -406,6 +431,16 @@ export async function openDb(file) {
   const closesStmt = db.prepare('SELECT open_time AS openTime, close FROM candles WHERE symbol = ? AND closed = 1 ORDER BY open_time');
   const lastClosedStmt = db.prepare('SELECT MAX(open_time) AS t FROM candles WHERE symbol = ? AND closed = 1');
 
+  // ---------- Caderno ----------
+  const noteInsStmt = db.prepare(`
+    INSERT INTO notes (symbol, time, text, kind, side, horizon_min, source, ref_time, seen_price)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const noteListStmt = db.prepare(`
+    SELECT id, time, text, kind, side, horizon_min AS horizonMin, source, ref_time AS refTime, seen_price AS seenPrice
+    FROM notes WHERE symbol = ? ORDER BY id DESC LIMIT ?
+  `);
+
   // ---------- Fase 5: agente ----------
   const PROPOSAL_COLS = `id, symbol, created_at AS createdAt, source, side, ref_price AS refPrice, stop, target, reason,
     status, decided_at AS decidedAt, note, plan, exec, opened_at AS openedAt, closed_at AS closedAt, exit_kind AS exitKind, net`;
@@ -532,6 +567,13 @@ export async function openDb(file) {
     windowStats: (symbol, from, to) => windowStmt.get(symbol, from, to),
     closes: (symbol) => closesStmt.all(symbol),
     lastClosedTime: (symbol) => lastClosedStmt.get(symbol).t ?? null,
+
+    // ---------- Caderno ----------
+    // So grava e lista: nao existe alterar nem apagar (o proprio banco recusa, por gatilho).
+    noteAdd: (n) => Number(noteInsStmt.run(
+      n.symbol, n.time, n.text, n.kind, n.side ?? null, n.horizonMin ?? null, n.source ?? null, n.refTime ?? null, n.seenPrice ?? null,
+    ).lastInsertRowid),
+    noteList: (symbol, limit = 2000) => noteListStmt.all(symbol, limit),
 
     // ---------- Fase 5: agente ----------
     agentAdd: (p) => Number(propInsStmt.run(

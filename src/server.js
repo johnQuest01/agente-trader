@@ -5,6 +5,7 @@ import { TIMEFRAMES, MINUTE } from './config.js';
 import { aggregate, aggregateFlow } from './aggregate.js';
 import { handleReplay } from './replay.js';
 import { handleEvents } from './events.js';
+import { handleNotes } from './notes.js';
 import { handleAgent } from './agent.js';
 import { handleAi } from './ai.js';
 
@@ -12,12 +13,17 @@ const INDEX = fileURLToPath(new URL('../public/index.html', import.meta.url));
 const REPLAY = fileURLToPath(new URL('../public/replay.html', import.meta.url));
 const EVENTOS = fileURLToPath(new URL('../public/eventos.html', import.meta.url));
 const AGENTE = fileURLToPath(new URL('../public/agente.html', import.meta.url));
+const CADERNO = fileURLToPath(new URL('../public/caderno.html', import.meta.url));
 
 export function startServer({ db, symbol, port, getStatus }) {
   const clients = new Set();
   let book = null; // gravador do livro de ofertas (fase 2), ligado depois por attachBook
   let agent = null; // agente da fase 5, ligado depois por attachAgent
   let ai = null; // conversa com a IA (fase 5), ligada depois por attachAi
+  // Quando o ultimo candle ao vivo passou por aqui, num relogio que nunca anda para tras
+  // (performance.now). O caderno so aceita previsao com o preco chegando: ver src/notes.js.
+  let lastLiveCandleAt = null;
+  const feedAgeMs = () => (getStatus().live && lastLiveCandleAt !== null ? performance.now() - lastLiveCandleAt : Infinity);
 
   const json = (res, code, body) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -54,6 +60,14 @@ export function startServer({ db, symbol, port, getStatus }) {
         return res.end(html);
       }
       if (await handleEvents(req, res, url, { db, symbol, json })) return;
+
+      // Caderno do Bruno: tela e rotas.
+      if (url.pathname === '/caderno') {
+        const html = await readFile(CADERNO);
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(html);
+      }
+      if (await handleNotes(req, res, url, { db, symbol, json, feedAgeMs })) return;
 
       // Fase 5: tela e rotas do agente.
       if (url.pathname === '/agente') {
@@ -170,7 +184,8 @@ export function startServer({ db, symbol, port, getStatus }) {
 
   return {
     server,
-    broadcastCandle: (candle) => send('candle', candle),
+    // So chega aqui o candle ao vivo que ja foi gravado no banco (ver src/index.js).
+    broadcastCandle: (candle) => { lastLiveCandleAt = performance.now(); send('candle', candle); },
     broadcastStatus: () => send('status', getStatus()),
     broadcastFlow: (flow) => send('flow', flow), // fluxo do minuto em formacao
     broadcastBig: (order) => send('big', order), // ordem agressora grande que acabou de sair

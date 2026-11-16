@@ -56,8 +56,9 @@ export function reaction(src, time) {
 // Movimento "tipico" de cada janela, em qualquer horario: a mediana e o percentil 90 do
 // tamanho da variacao, em janelas seguidas (sem sobreposicao) de todo o historico. Sem isso
 // nao da para saber se a reacao a um evento foi fora do comum ou so o balanco de sempre.
-export function typicalMoves(closes) {
-  return HORIZONS.map((h) => {
+// `horizons` permite medir outras janelas (o caderno usa 1 hora, 4 horas, 1 dia e 1 semana).
+export function typicalMoves(closes, horizons = HORIZONS) {
+  return horizons.map((h) => {
     const sizes = [];
     for (let i = 1; i + h.minutes - 1 < closes.length; i += h.minutes) {
       const a = closes[i - 1];

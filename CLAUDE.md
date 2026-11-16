@@ -7,6 +7,11 @@ Uma branch só: trabalhar direto na `main`, sem criar outras branches nem pull r
 (pedido do Bruno em 14/11/2026). Antes de começar, rodar `git pull`: em 14/11 duas sessões
 trabalharam neste repositório ao mesmo tempo e os trabalhos tiveram de ser juntados à mão.
 
+**Este repositório é público.** O que é pessoal do Bruno (dinheiro, o que aconteceu com as
+chaves, de onde e como ele acompanha) não entra neste arquivo nem em outro do repositório: fica
+em `CLAUDE.local.md`, na raiz do projeto, fora do git (pedido dele em 15/11/2026). **Ler esse
+arquivo no começo de cada sessão**, se ele existir.
+
 ## Objetivo
 
 Laboratório local para estudar o mercado com dados reais da Binance e, mais tarde,
@@ -32,7 +37,8 @@ operação — não taxa de acerto.
 5. Agente conversando com o Bruno + ordens no Demo Mode
    (`https://demo-api.binance.com`), com limites de risco fixos em código que a IA
    não altera, e registro de toda decisão (FEITO em 14/11/2026, testado só com corretora
-   e API da Anthropic simuladas; faltam os limites e as chaves do Bruno — ver "Fase 5")
+   e API da Anthropic simuladas; em 15/11/2026 a IA respondeu de verdade pela API da Anthropic;
+   faltam os limites e uma chave do Demo Mode que funcione — ver "Fase 5")
 
 ## Fase 1 — o que existe
 
@@ -113,15 +119,18 @@ Pendências conhecidas (não bloqueiam a fase 2):
 - `/api/candles` de 1d agrega todos os 1m em memória: ~0,15 s com 30 dias, ~3,5 s com
   1 ano. Trocar por agregação em SQL quando o histórico crescer.
 - Biblioteca do gráfico vem do CDN: sem internet a página não renderiza.
-- Watchdog de 60 s pode derrubar conexões saudáveis em pares sem negócio por >60 s
-  (não verificado se a Binance manda candle sem trade).
+- Watchdog de 60 s pode derrubar conexões saudáveis em pares sem negócio por >60 s. Visto em
+  15/11/2026 num par quase parado (ADABRL): a Binance manda o candle a cada virada de minuto
+  mesmo sem negócio, o maior silêncio foi de 56 s e o watchdog não disparou em 7 minutos. A
+  folga é de só 4 s.
 - Rodar 24 horas seguidas ainda não foi feito (a Binance derruba toda conexão ao vivo
   depois de 24 h).
 - O teste real de queda de internet é anterior à junção das duas versões da reconexão;
   com o código juntado só há as simulações.
 - A corrida do candle provisório só foi reproduzida com uma Binance simulada; os testes
   de reprodução (dela e das quedas de conexão) não estão no repositório.
-- O desenho da vela ao vivo foi conferido pelos dados, não olhando a tela.
+- O desenho da vela ao vivo foi conferido pelos dados e, em 15/11/2026, visto em foto (ver
+  "Teste reverso, eventos e fotos"); o Bruno ainda não usou a tela.
 
 ## Fase 2 — fluxo e métricas
 
@@ -309,13 +318,13 @@ O que existe:
   `scripts/testar-agente.js` (34), com a corretora simulada de
   `scripts/lib/corretora-simulada.js`. Rodar depois de mexer em qualquer arquivo da fase 5.
 - A IA: `src/ai.js` (a conversa: pedido à API, rodadas de consulta, teto de gasto, rotas
-  `/api/ai/...`, evento `ai` no `/api/stream`), `src/ai-tools.js` (as seis ferramentas dela),
+  `/api/ai/...`, evento `ai` no `/api/stream`), `src/ai-tools.js` (as sete ferramentas dela),
   `src/ai-prompt.js` (as instruções; único arquivo de código com acentos) e
   `src/ai-client.js` (a ligação com a Anthropic; o único lugar que usa a chave dela).
   Tabelas `ai_conversations` e `ai_messages`. Painel "Conversa com a IA" na tela `/agente`.
-- `scripts/testar-ia.js` (24 casos, com uma IA de roteiro) e `scripts/testar-ia-cliente.js`
+- `scripts/testar-ia.js` (25 casos, com uma IA de roteiro) e `scripts/testar-ia-cliente.js`
   (8 casos: a biblioteca oficial falando com uma API simulada local; precisa de
-  `npm install`). `npm test` roda os sete scripts de teste do projeto.
+  `npm install`). `npm test` roda os oito scripts de teste do projeto (154 casos).
 
 Regras (não desfazer):
 - **Só Demo Mode.** O cliente recusa qualquer endereço que não seja
@@ -358,10 +367,11 @@ Regras (não desfazer):
   operação, R médio; a taxa de acerto por último.
 
 Regras da IA (não desfazer):
-- **A IA só tem seis ferramentas:** cinco leem dados do laboratório (candles, ordens grandes,
-  livro, eventos, conta e operações) e uma registra proposta. Não existe ferramenta para
-  aprovar, enviar ordem, encerrar posição ou mexer em limite; pedido de ferramenta que não
-  existe volta como erro para ela. Uma proposta dela por vez.
+- **A IA só tem sete ferramentas:** seis leem dados do laboratório (candles, ordens grandes,
+  livro, eventos, caderno do Bruno, conta e operações) e uma registra proposta. Não existe
+  ferramenta para aprovar, enviar ordem, encerrar posição, mexer em limite ou escrever no
+  caderno; pedido de ferramenta que não existe volta como erro para ela. Uma proposta dela por
+  vez. (Eram seis até 15/11/2026, quando entrou a leitura do caderno.)
 - **A conversa é reenviada inteira e nunca é reescrita.** Instruções, ferramentas e mensagens
   antigas vão sempre iguais, byte a byte; o que muda a cada pergunta (hora, preço, situação da
   conta) vai dentro da mensagem nova. Os modelos atuais guardam o raciocínio de uma rodada para
@@ -423,7 +433,8 @@ automatizado, num servidor de teste com limites de teste. Contra o Demo Mode de 
 que não precisa de chave: regras do par, preço, diferença de relógio e a recusa de uma chave
 inválida.
 
-Verificado na IA: os 24 + 8 casos (pedido montado como o guia da Anthropic manda; histórico
+Verificado na IA: os 25 + 8 casos (eram 24 + 8 até entrar a leitura do caderno, em 15/11/2026;
+pedido montado como o guia da Anthropic manda; histórico
 idêntico de uma pergunta para a outra; proposta da IA pendente e marcada como dela; tentativa
 de "aprovar" devolvida como erro; limite de rodadas; teto de gasto; recusa; resposta cortada;
 erros da API em frases claras e sem a chave; variáveis do sistema que não desviam a chave);
@@ -448,3 +459,271 @@ Falta, e depende do Bruno:
   usar chave da conta real neste projeto;
 - criar a chave da API da Anthropic (platform.claude.com) e colocá-la no `.env`
   (`ANTHROPIC_API_KEY`); rodar `npm install` em qualquer máquina nova.
+
+## Caderno de anotações
+
+Pronto e testado em 15/11/2026 (Windows 10, Node 22.20), a pedido do Bruno ("Sim, construa").
+Tela em http://localhost:3333/caderno (há links nas outras telas). É a primeira peça da visão
+dele: ele escreve o que viu, leu ou pensa e, se quiser, o lado que espera (alta ou baixa) com um
+prazo (1 hora, 4 horas, 1 dia ou 1 semana); o laboratório confere depois e monta o placar.
+
+O que existe:
+- `src/notes.js` — as contas da conferência, o placar e as rotas `/api/notes` (ler e gravar) e
+  `/api/notes/now` (o que seria carimbado agora; a tela consulta de 2 em 2 segundos).
+- `public/caderno.html` — a tela: formulário (com confirmação antes de gravar), lista com o
+  resultado de cada previsão, placar, resultado por assunto e por prazo, movimento típico de
+  cada prazo. Os assuntos sugeridos (a lista que o Bruno fez) ficam nesse arquivo.
+- Tabela `notes` em `data/market.db`.
+- `scripts/testar-caderno.js` — 26 casos, com candles montados à mão. Rodar depois de mexer em
+  `src/notes.js`.
+- A IA lê o caderno pela ferramenta `ver_caderno` (só leitura).
+
+Regras (não desfazer):
+- **O preço de referência de uma previsão é o FECHAMENTO do minuto em que ela foi gravada**: um
+  preço que ainda não existia quando o Bruno clicou. A primeira versão usava o último candle já
+  fechado, o que dava até um minuto de vantagem a quem prevê (numa notícia, o tranco que ele
+  acabou de ver na tela entraria como acerto); foi trocada antes de ir para o ar. Por isso o
+  preço não é gravado na tabela: sai dos candles quando o minuto fecha.
+- **O minuto de referência vem do coletor, nunca do relógio do PC:** é o candle em formação (o
+  mais novo do banco); se o mais novo já fechou, é o minuto seguinte.
+- **Previsão só é aceita com o preço ao vivo chegando:** último candle ao vivo há no máximo
+  `MAX_FEED_AGE` = 10 s, medido por tempo decorrido (`performance.now` em `src/server.js`), não
+  pela hora do relógio. Com o coletor parado, o "minuto em formação" do banco já teria fechado
+  no mercado. Anotação sem previsão é sempre aceita (sem minuto de referência se o preço está
+  parado).
+- **Nada é alterado nem apagado:** não há rota para isso e o banco recusa (gatilhos). Uma
+  previsão errada que pudesse ser apagada não contaria no placar. Erro de digitação se resolve
+  com outra anotação.
+- **A hora e o minuto de referência são carimbados pelo servidor;** o que o pedido mandar nesses
+  campos é ignorado.
+- **O resultado vai do preço de referência até o fechamento do candle que termina o prazo**, sem
+  stop. Preço igual no fim do prazo conta como erro. Com mais de 2% dos minutos ausentes não há
+  resultado.
+- **Ordem do placar:** média no lado previsto, média com a taxa (como se tivesse operado: 0,1%
+  por lado), pior previsão; os acertos por último, ao lado da chance de uma moeda fazer igual
+  ou melhor. **Com menos de 20 previsões conferidas os números ficam em cinza: não provam nada.**
+- A IA só LÊ o caderno; quem escreve é o Bruno. O texto das anotações é dado, não instrução.
+- **Testar o caderno sempre num servidor de teste com banco separado** (`PORT`, `DB_FILE` e as
+  três chaves vazias no comando): no banco principal uma anotação de teste ficaria para sempre.
+
+Limites conhecidos:
+- **Acertar o lado não é ganhar dinheiro.** A conta com taxa é sem stop e sem derrapagem.
+- **O placar ainda não desconta a tendência:** num período de queda, quem diz "baixa" toda vez
+  acerta mais da metade sem saber nada. A comparação honesta é com entradas às cegas do mesmo
+  lado, prazo e período (o protocolo de `scripts/lib/campeonato.js`); ainda não foi feita. A
+  tela avisa.
+- Previsões com prazos que se sobrepõem não são independentes: 20 na mesma tarde valem menos
+  que 20 em dias diferentes.
+- Não há como anular uma previsão gravada por engano (a confirmação na tela é a proteção).
+- Em par com poucos negócios a previsão é recusada quase sempre: no ADABRL (um negócio a cada
+  3,5 minutos) o preço só "chegava" uns 10 segundos por minuto. No BTCUSDT os candles chegam a
+  cada 1 a 2 segundos.
+- A hora mostrada em cada anotação é a do relógio do PC; a conta usa o minuto da Binance.
+- O resultado final de cada previsão fica guardado na memória por 10 minutos (refazer tudo a
+  cada consulta custava de 1 a 6 ms por previsão, medido com 1 ano de candles). A régua do
+  movimento típico lê o ano inteiro: 0,75 s na primeira consulta de cada hora.
+- Só o par do `SYMBOL`. A lista mostra as 2.000 anotações mais recentes.
+
+Verificado em 15/11/2026, sempre em servidores de teste com banco separado e sem chaves:
+- os 26 casos das contas; `npm test` inteiro (155 casos);
+- 29 conferências de ponta a ponta com o programa de verdade: hora e minuto carimbados pelo
+  servidor (o minuto bateu com a hora da Binance), recusas, banco recusando alterar e apagar por
+  fora do programa, pedido com nome de outro site recusado (403);
+- **o preço de referência de uma previsão gravada ao vivo ficou idêntico ao fechamento oficial
+  da Binance daquele minuto** (64.776,01; na tela, na hora do clique, estava 64.794,53), e o
+  "até agora" bateu com a conta feita direto com o candle oficial;
+- 9 previsões de exemplo num banco de teste (prazos de 1 hora a 1 semana) e o placar refeitos
+  por um cálculo independente, com candles buscados direto na Binance: todos idênticos;
+- sem conexão ao vivo (endereço que não responde) e com o preço parado de verdade (par ADABRL,
+  conexão aberta, 11 s sem candle): previsão recusada, anotação simples aceita;
+- a tela exercitada pelo navegador automatizado (gravar com confirmação, voltar, recusa sem
+  preço ao vivo) e vista em foto.
+
+Dois achados de passagem:
+- **Dois processos do Node neste Windows discordam em alguns milissegundos sobre a hora** (até
+  11 ms em 9.000 medições). Um teste meu assumia que não; o programa não depende disso.
+- **A Binance manda o candle a cada virada de minuto mesmo sem negócio** (visto no ADABRL): o
+  maior silêncio foi de 56 s e o vigia de 60 s não disparou em 7 minutos. A folga é de 4 s.
+
+As instruções da IA mudaram em 15/11/2026: entrou o caderno e saiu a frase "o histórico de
+candles tem cerca de 30 dias", que ficou errada com 1 ano no banco. A conversa anterior continua
+guardada; a próxima mensagem começa uma conversa nova. **A IA ainda não leu as instruções novas
+de verdade** (nenhuma mensagem foi enviada depois da mudança).
+
+## Teste reverso, eventos e fotos (15/11/2026)
+
+Pedido do Bruno em 15/11/2026: testes em que só se perde, um estudo do porquê das perdas, os
+acontecimentos do período (Estados Unidos, Rússia e China; Brasil por último) e fotos das telas.
+
+Como o Bruno acompanha: à distância, pela conversa. O programa roda num computador só (o
+"principal", onde o Claude opera), e as telas só abrem nele. Quando ele não puder ver o sistema,
+quer **fotos e relatórios**, enviados pela conversa.
+
+O que existe:
+- `scripts/estudo-perdas.js` — o teste reverso no histórico: de meia em meia hora, uma compra e
+  uma venda em três jeitos (stop de 0,2%, 0,5% e 1%; alvo de 2× o stop; prazo de 1 h, 4 h e
+  24 h), com as contas do replay (`stepTrade` e `tradeResult`) e passo de 1 minuto. Lê o banco
+  só em leitura. Grava `boletas-so-perdas.csv` e `estudo-perdas.json` em
+  `data/relatorios/<dia>/` (pasta que o git ignora).
+- `scripts/fotos.js` — fotografa telas com o Edge ou o Chrome sem janela (protocolo de
+  depuração, perfil temporário próprio). Recebe um arquivo de passos em JSON.
+- Na tabela de eventos, cinco acontecimentos com horário exato, registrados pelo Claude em
+  15/11/2026: decisão do Fed (28/10 18:00 UTC), roubo de US$ 6,3 bilhões na Binance
+  (29/10 20:05 UTC), eleições nos EUA (03/11 23:00 UTC), emprego (06/11 13:30 UTC) e inflação
+  (10/11 13:30 UTC).
+
+Regras (não desfazer):
+- **Só entra na tabela de eventos o que tem horário conhecido por fonte independente do preço.**
+  Escolher o horário olhando o tranco no gráfico fabrica uma "reação". Notícia sem horário
+  exato fica no relatório, não na tabela.
+- O estudo descreve o período; não prevê. Todo número dele sai com o aviso de que as operações
+  se sobrepõem no tempo e de que o histórico é curto.
+
+Histórico de 1 ano (15/11/2026): a pedido do Bruno, o banco passou a ter os candles de 1 minuto
+desde 15/11/2025 (526.895 candles), baixados pelo próprio programa com `BACKFILL_DAYS=365 npm
+start`. Para isso o programa foi reiniciado às 18h30: a contagem de "dias seguidos rodando"
+recomeçou dali, e o livro de ofertas tem um buraco de uns 4 minutos nesse horário. Com 1 ano no
+banco, `/api/candles` leva 0,5 s em 1h, 1,9 s em 4h e 3,2 s em 1d.
+
+Dois números do teste reverso que não se confundem (o Bruno estranhou "6 mil em 8 mil"):
+- **Às cegas** (compra E venda em toda entrada): perde perto de 67% por pura conta, porque com
+  alvo de 2× o stop e preço sem direção 2 em cada 3 saem no stop. Não é defeito do teste.
+- **Errando todas** (em cada entrada, o lado que perde): 100% de perdas, por construção. Só é
+  possível olhando o futuro; nenhuma regra de verdade consegue isso, nem o contrário disso.
+
+O que saiu com 1 ano (16/11/2025 a 14/11/2026, 17.467 entradas, Bitcoin em queda de 32%):
+- Errando todas: 52.401 de 52.401 perdem; perda média de 0,37%, 0,61% e 1,13% por operação nos
+  três jeitos. Em 53%, 38% e 28% das entradas o lado contrário também perdia.
+- Às cegas: 104.802 operações, 73.087 perdedoras (69,7%); perda média de 0,199%, 0,198% e
+  0,201% por operação, que é a taxa. Vale para cada um dos 13 meses.
+- Em 12 dos 13 meses o lado que mais perdeu foi o contrário à direção do mês.
+- **O sinal da agressão, visto em 30 dias, não se confirmou em 1 ano** (no jeito médio
+  inverteu). O único padrão que se repetiu: entrar "esticado" (comprar perto do topo da faixa
+  de 4 horas, vender perto do fundo) foi pior, uns 0,04 ponto por operação. Nenhum grupo fica
+  positivo depois das taxas.
+- Errando todas com limites, 1 ano: perda de 79% a 100% com qualquer conjunto de exemplo.
+- 1.200 boletas sorteadas refeitas por um cálculo independente: todas idênticas.
+- `validar.js --completo` depois do download: os 526.894 candles fechados idênticos aos da
+  Binance, sem buracos; negócios, ordens grandes e livro também conferem.
+
+O que saiu (30 dias, de 16/10 a 14/11/2026, mês em que o Bitcoin caiu 21%):
+- 8.604 operações simuladas, 6.060 perdedoras. Resultado médio de −0,200%, −0,185% e −0,206%
+  por operação nos três jeitos: é a taxa de 0,2% (ida e volta). Antes das taxas, zero.
+- Em 36% das entradas (58% com stop de 0,2%) perdem a compra E a venda.
+- Com stop de 0,2% a taxa custa 100% do risco; para empatar seria preciso acertar 67%.
+- Emprego e inflação dos EUA: preço 17 a 20 vezes o normal no primeiro minuto. Roubo na
+  Binance: −1,87% em 1 hora (11 vezes o típico) e −4,3% em 1 dia.
+- Em 30 dias, entrar contra a agressão dos últimos 30 minutos parecia pior. Em 1 ano isso não
+  se confirmou (ver acima): conclusão tirada de 30 dias não vale.
+- **Os quatro limites não freiam o mês.** Errando todas, 1% por operação com 3 por dia leva
+  48% em 30 dias. Um limite de perda acumulada é uma ideia em aberto; a decisão é do Bruno.
+- Teste do agente com tudo perdendo (corretora simulada; limites de teste de 1% por operação,
+  3% por dia e 5 por dia): três stops, a terceira operação reduzida pelo que restava do dia, a
+  quarta e a quinta barradas. O dia fechou em −300,68 para um limite de 300: um salto de preço
+  passa do limite.
+
+Verificado em 15/11/2026: 600 boletas sorteadas refeitas por um cálculo independente, todas
+idênticas; `npm test` (128 casos) e `validar.js --completo` (45.894 candles idênticos); as
+telas vistas em foto pela primeira vez. Os acontecimentos vieram de pesquisa na internet: o que
+conferi foi o horário e o tamanho do movimento contra o nosso banco, não as notícias em si.
+
+Vistos nas fotos e ainda não corrigidos: rótulos de ordens grandes e de eventos se sobrepõem
+no gráfico quando há muitos juntos; na tela do replay sem sessão, a frase da taxa sai sem o
+número.
+
+Chaves (15/11/2026): a da Anthropic foi aceita numa consulta sem custo (os três modelos
+aparecem). A do Demo Mode foi **recusada** (401, código −2015, a mesma resposta de uma chave
+inventada): falta uma chave criada em demo.binance.com.
+
+Mais tarde no mesmo dia (15/11/2026):
+- **As chaves ficam só no `.env` do principal**, fora do git. **Antes de qualquer commit,
+  conferir que o `.env.example` não tem chave**, e nunca mostrar o `git diff` desse arquivo. A
+  chave do Demo Mode continua recusada: a tela do agente mostra o erro 401. **Nenhum pedaço de
+  chave entra neste arquivo nem em outro do repositório**: nem o começo, nem o fim.
+- **A IA respondeu de verdade.** Primeira conversa pela API da Anthropic: 32 segundos, cerca de
+  US$ 0,12, cinco consultas numa rodada, sem aviso de recurso recusado e sem proposta (como
+  pedido). A mensagem foi escrita pelo Claude a pedido do Bruno.
+- `scripts/estudo-regras.js` — campeonato de regras: 20 situações conhecidas (alta ou queda
+  forte, rompimentos, candles seguidos, médias, IFR, volume com agressão), comprando e vendendo,
+  em dois jeitos; treino em 271 dias e confirmação nos últimos 92. **Resultado: nenhuma** das 80
+  combinações perde ou ganha das entradas às cegas além do acaso (0 piores; 1 melhor no treino,
+  que não se confirmou; 0 positivas depois das taxas). Sinais de 5 situações e 600 boletas
+  conferidos por cálculo independente. A simulação comum aos estudos fica em
+  `scripts/lib/historico.js`.
+- Taxa contra movimento típico (1 ano): em 1 minuto o preço anda 0,024%, em 5 minutos 0,055%,
+  em 1 hora 0,19% e em 1 dia 1,13%; a taxa de ida e volta é 0,2%. Operação rápida paga várias
+  vezes o movimento normal.
+- Quando o Bitcoin se mexe (Brasília): pico das 10h às 13h nos dias úteis (segunda das 9h às
+  13h: 1,00% por hora, contra 0,62% na média); sábado é o dia mais parado; domingo à noite
+  volta a mexer.
+- Os dez maiores trancos do ano têm quase sempre alavancagem sendo liquidada, acesa por: juros e
+  inflação dos EUA, ações de tecnologia e IA, Irã e petróleo, falas de Trump, ouro e prata, e
+  notícias de cripto (roubo, ETFs, regras). Estão no relatório, não na tabela de eventos (as
+  reportagens dão o dia, não o minuto).
+- O programa foi reiniciado três vezes neste dia (18h30, 18h49 e antes disso às 23h41 de 14/11):
+  o livro de ofertas tem um buraco em cada reinício.
+
+Baleias (pedido do Bruno em 15/11/2026: "Sim, 90 dias"):
+- `scripts/reconstruir-baleias.js` — reconstrói o fluxo por minuto e as ordens grandes de um
+  período passado a partir do histórico público de negócios da Binance, sem guardar os negócios
+  crus e **sem tocar no banco principal** (grava em `data/baleias.db`). As contas são as de
+  `step` em `src/trades.js`, repetidas de propósito para não mexer no coletor que está rodando:
+  **se mudar lá, mudar aqui.** Respeita o limite da Binance (teto de 2.800 de 6.000 por minuto),
+  pode ser interrompido e retomado. Cada minuto é comparado com o candle (coluna `confere`).
+- Teste de 3 horas: 180 minutos idênticos aos candles e 869 ordens grandes idênticas às que o
+  coletor ao vivo gravou no mesmo trecho.
+- Os 90 dias (17/08 a 15/11/2026) foram reconstruídos em 15/11/2026, em 128 minutos e sem
+  aviso de limite da Binance: 85.324.677 negócios lidos, 816.103 ordens grandes, 130.924
+  minutos idênticos aos candles (nenhum diferente). No trecho que o coletor ao vivo também
+  gravou (1.541 minutos), fluxo e 15.751 ordens grandes idênticos, um por um. `data/baleias.db`
+  tem 100 MB e fica fora do git.
+- **Resultado do teste das baleias: nenhuma passou.** De 84 combinações (14 situações, comprar
+  e vender, três jeitos), 0 perdem das cegas com folga, 1 ganhou no treino e não se confirmou, 0
+  ficaram positivas depois das taxas. Uma baleia sozinha não manda no preço: depois das 12
+  maiores ordens (8,5 a 10 milhões de USDT) o preço ficou dentro de 0,17% em 5 minutos. O único
+  efeito que se repetiu: nos 5 minutos depois de um minuto com 30 ou mais ordens grandes, alta
+  de 0,04% a 0,05% acima do normal, cinco vezes menor que a taxa. Os "efeitos" de 1 hora vistos
+  no treino (período de alta) inverteram na confirmação (período de queda). Sinais de 4
+  situações e 600 boletas conferidos por cálculo independente.
+- `scripts/estudo-baleias.js` — 14 situações com ordens grandes (compra ou venda de 1 e de 3
+  milhões, saldo em 5 e em 30 minutos, enxurrada de ordens, baleia contra o movimento, baleia
+  absorvida), comprando e vendendo, em três jeitos; treino nos primeiros 60 dias, confirmação
+  no resto. Só roda com a reconstrução completa (ou `--parcial`, para testar).
+- `scripts/lib/campeonato.js` — o protocolo de treino e confirmação, comum ao campeonato de
+  regras e ao teste das baleias. A reorganização foi conferida: o campeonato de regras deu a
+  mesma impressão digital antes e depois.
+
+Visão do Bruno para o projeto (mensagens de 15/11/2026, resumidas):
+- um banco de notícias e acontecimentos do mundo (política, guerras, Irã, Rússia, China, ouro,
+  petróleo, terras raras, nióbio, dólar, IA e chips, Nvidia, Tesla, SpaceX, alimentos e
+  exportações do Brasil, escândalos, catástrofes, mortes de políticos e de presidentes de
+  empresas), com um **campo aberto para as anotações e avaliações dele** sobre para que lado o
+  mercado pode ir;
+- um agente que acha padrão de compra ou venda, enxerga o momento (notícias incluídas), entra,
+  realiza o lucro e sai;
+- depois do Bitcoin: moedas "meme" e outras (Ethereum, Solana); mais tarde, MT5 para dólar e
+  mini-índice.
+- mais adiante (**ele pediu em 15/11/2026 para NÃO fazer isto agora**; fica só registrado, e
+  com isso também esperam o teste "a favor ou contra a notícia" e o filtro de oferta que some):
+  um programa que acompanhe Binance e B3 "por fora do gráfico", tirando os "fluxos falsos",
+  nascido de testes em que o agente perde de propósito indo contra as notícias e depois testa o
+  contrário. Foi dito a ele que "fluxo falso" precisa virar algo medido (oferta grande que some
+  do livro, agressão absorvida, tranco devolvido em minutos).
+**Nada do que foi conversado sobre valores é decisão de operar com dinheiro real:** continua
+valendo a regra do Objetivo (só simulação até ele decidir com todas as letras, depois de meses
+de resultado). O Claude não envia ordem com dinheiro real nem dá conselho de investimento; o
+papel dele aqui é medir e dizer o que os dados mostram.
+Foi dito a ele: abrir mais mercados antes de haver um padrão confirmado em um só multiplica o
+trabalho sem aumentar a chance de lucro. A primeira peça pedida na ideia dele, o caderno de
+anotações (o lado que ele espera, registrado antes, conferido depois pelo laboratório), foi
+construída em 15/11/2026: ver "Caderno de anotações". Os assuntos da lista dele entram como
+sugestões do campo "assunto" do caderno; a tabela de eventos continua com tipo livre.
+
+Pedidos novos do Bruno em 15/11/2026, ainda SEM decisão tomada (não tratar como decididos):
+- notícias e acontecimentos do mundo de forma contínua (ouro, chips e IA, guerras, petróleo e
+  Ormuz, Rússia, China, Trump, foguetes, carros elétricos, catástrofes);
+- um "cérebro" que procure padrões (baleias, picos, grandes quedas);
+- o agente operando sozinho, com entradas e saídas rápidas, compensando as taxas.
+O que foi dito a ele: os testes de hoje não acharam padrão nenhum, e a taxa pesa mais quanto
+mais rápida a operação. Continua valendo "o agente propõe e o Bruno aprova cada ordem" até ele
+mudar isso com todas as letras.

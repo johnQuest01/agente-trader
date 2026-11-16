@@ -193,7 +193,7 @@ await caso('conversa inteira pela biblioteca: consulta, resposta da consulta e r
   const [p1, p2] = recebidos.slice(antes);
   assert.equal(recebidos.length - antes, 2);
   assert.equal(p1.body.messages.length, 1);
-  assert.equal(p1.body.tools.length, 6);
+  assert.equal(p1.body.tools.length, 7);
   assert.equal(p1.body.fallbacks, 'default');
   assert.deepEqual(p2.body.messages[1], { role: 'assistant', content: turno1 }); // a biblioteca nao mexe no turno que volta
   const [res] = p2.body.messages[2].content;

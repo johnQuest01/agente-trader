@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caderno · Agente Trader</title>
+<style>
+  :root {
+    --bg: #0d1014; --panel: #151a21; --line: #232a34; --text: #d7dde5; --muted: #7d8896;
+    --up: #2ebd85; --down: #f6465d; --accent: #f0b90b;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header b.title { font-size: 16px; }
+  a { color: var(--accent); text-decoration: none; }
+  button, select, input, textarea {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; font: inherit;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.main { background: var(--accent); border-color: var(--accent); color: #111; font-weight: 600; }
+  button:disabled, select:disabled { opacity: .45; cursor: not-allowed; }
+  .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
+  #preco { font-variant-numeric: tabular-nums; font-size: 13px; }
+  #msg { margin-left: auto; font-size: 12px; max-width: 50%; text-align: right; }
+  #main { flex: 1; min-height: 0; display: flex; }
+  #left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #placar { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+  .tile { flex: 1; min-width: 150px; padding: 10px 16px; border-right: 1px solid var(--line); }
+  .tile:last-child { border-right: 0; }
+  .tile span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile small { display: block; color: var(--muted); font-size: 11px; min-height: 15px; }
+  #aviso { padding: 6px 16px; font-size: 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
+  #tablewrap { flex: 1; min-height: 0; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid #1a2029; text-align: right; white-space: nowrap; vertical-align: top; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+  td.txt { white-space: normal; min-width: 240px; max-width: 560px; }
+  td.txt .nota { white-space: pre-wrap; overflow-wrap: anywhere; }
+  td small { color: var(--muted); display: block; }
+  aside { width: 360px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; }
+  section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  section h3 { margin: 0 0 8px; font-size: 13px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .row label { color: var(--muted); font-size: 12px; min-width: 60px; }
+  .row input, .row select { flex: 1; min-width: 0; }
+  textarea { width: 100%; height: 96px; resize: vertical; font-size: 13px; }
+  .lado { display: flex; gap: 6px; flex: 1; min-width: 0; }
+  .lado button { flex: 1; padding: 7px 4px; white-space: nowrap; }
+  #semvivo { color: var(--down); }
+  .lado button.on { border-color: var(--accent); color: var(--accent); }
+  .lado button[data-side="alta"].on { border-color: var(--up); color: var(--up); background: #12261f; }
+  .lado button[data-side="baixa"].on { border-color: var(--down); color: var(--down); background: #2a161a; }
+  #confirma { margin-top: 8px; padding: 8px; border: 1px solid var(--accent); border-radius: 6px; font-size: 12px; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: 1fr auto auto; gap: 3px 12px; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .grid span { color: var(--muted); }
+  aside table { font-size: 12px; }
+  aside th, aside td { padding: 4px 6px; }
+  aside th:nth-child(n+2), aside td:nth-child(n+2) { text-align: right; }
+  aside td:first-child { white-space: normal; }
+  ul.regras { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; }
+  ul.regras li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <b class="title">Caderno</b>
+  <a href="/">← ao vivo</a>
+  <a href="/replay">Replay →</a>
+  <a href="/eventos">Eventos →</a>
+  <a href="/agente">Agente →</a>
+  <span id="preco" class="muted"></span>
+  <div id="msg"></div>
+</header>
+<div id="main">
+  <div id="left">
+    <div id="placar">
+      <div class="tile"><span>Média no lado previsto</span><b id="t-lado">—</b><small id="t-lado-s"></small></div>
+      <div class="tile"><span id="t-taxa-l">Com a taxa</span><b id="t-taxa">—</b><small>como se tivesse operado, sem stop</small></div>
+      <div class="tile"><span>Pior previsão</span><b id="t-pior">—</b><small></small></div>
+      <div class="tile"><span>Previsões conferidas</span><b id="t-conf">0</b><small id="t-conf-s"></small></div>
+      <div class="tile"><span>Acertos do lado</span><b id="t-acerto">—</b><small id="t-acerto-s"></small></div>
+    </div>
+    <div id="aviso"></div>
+    <div id="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Quando</th><th>Anotação</th><th>Previsão</th><th>Preço de referência</th><th>Resultado no lado previsto</th><th>Pior momento</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+  <aside>
+    <section>
+      <h3>Nova anotação</h3>
+      <textarea id="texto" maxlength="2000" placeholder="O que você viu, leu ou pensa. Ex.: o Fed manteve os juros e o discurso foi duro; espero queda nas próximas horas."></textarea>
+      <div class="row"><label for="assunto">Assunto</label><input id="assunto" list="assuntos" maxlength="40" placeholder="petróleo, china, ia e chips…"><datalist id="assuntos"></datalist></div>
+      <div class="row"><label for="fonte">Fonte</label><input id="fonte" maxlength="300" placeholder="de onde veio (opcional)"></div>
+      <div class="row">
+        <label>Espero</label>
+        <div class="lado">
+          <button data-side="alta">▲ alta</button>
+          <button data-side="baixa">▼ baixa</button>
+          <button data-side="" class="on">só anotar</button>
+        </div>
+      </div>
+      <div class="row"><label for="prazo">Prazo</label><select id="prazo" disabled></select></div>
+      <div id="semvivo" class="hint" hidden>Sem preço ao vivo da Binance agora: a previsão não pode ser gravada. A anotação simples pode.</div>
+      <div class="row"><button id="gravar" class="main">Gravar no caderno</button></div>
+      <div id="confirma" hidden>
+        <div id="confirmatxt"></div>
+        <div class="row"><button id="sim" class="main">Confirmar e gravar</button><button id="nao">Voltar</button></div>
+      </div>
+      <div class="hint">Escreva antes; o laboratório confere depois. A hora e o preço são carimbados pelo servidor.</div>
+    </section>
+    <section>
+      <h3>Por assunto</h3>
+      <div id="porassunto"></div>
+      <div class="hint">Com menos de 20 previsões conferidas, o número aparece em cinza: não prova nada.</div>
+    </section>
+    <section>
+      <h3>Por prazo</h3>
+      <div id="porprazo"></div>
+    </section>
+    <section>
+      <h3>Movimento típico do preço</h3>
+      <div class="grid" id="tipico"></div>
+      <div class="hint">Tamanho da variação em qualquer horário, em todo o histórico. Serve de régua: um resultado de 1× é o balanço de sempre.</div>
+    </section>
+    <section>
+      <h3>Como a conta é feita</h3>
+      <ul class="regras">
+        <li>O preço de referência é o do fim do minuto em que você gravou: um preço que ainda não existia quando você clicou. O tranco que já estava na tela não conta a seu favor.</li>
+        <li>O resultado vai desse preço até o fim do prazo. Positivo = o preço foi para o lado que você previu.</li>
+        <li>Acertar o lado não é ganhar dinheiro: olhe o resultado com a taxa.</li>
+        <li>Num período de queda, quem diz "baixa" toda vez acerta mais da metade sem saber nada (e o contrário na alta). O placar ainda não desconta isso.</li>
+        <li>Nada pode ser alterado nem apagado. Errou ao escrever? Grave outra anotação explicando.</li>
+      </ul>
+    </section>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d = 2) => n.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (n, d = 2) => (n >= 0 ? '+' : '') + fmt(n, d) + '%';
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+const quando = (ms) => new Date(ms).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+const hora = (ms) => new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const sinal = (n) => (n > 0 ? 'up' : n < 0 ? 'down' : 'muted');
+const MINUTO = 60000;
+// Assuntos sugeridos (o campo é livre). Vieram da lista que o Bruno fez em 15/11/2026. Em
+// minúsculas, como o servidor grava, para o mesmo assunto não aparecer duas vezes.
+const SUGERIDOS = [
+  'juros e inflação (eua)', 'política (eua)', 'guerra e oriente médio', 'rússia e ucrânia', 'china',
+  'petróleo', 'ouro e metais', 'ia e chips', 'empresas (tesla, spacex, nvidia)',
+  'cripto (corretoras, regras, etfs)', 'brasil', 'catástrofe ou acidente', 'leitura do gráfico', 'geral',
+];
+
+let D = null;        // o que o servidor devolveu: anotacoes, placar e regua
+let LIVE = null;     // o que seria carimbado agora: minuto de referencia e preco na tela
+let side = '';       // '', 'alta' ou 'baixa'
+let semServidor = false;
+
+const say = (text, bad) => { $('msg').textContent = text || ''; $('msg').className = bad ? 'down' : 'muted'; };
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `erro ${res.status}`);
+  return data;
+}
+
+// O movimento tipico do prazo (so com amostra suficiente).
+function tipico(minutes) {
+  const i = D.horizons.findIndex((h) => h.minutes === minutes);
+  const t = D.typical[i];
+  return t && t.samples >= 30 && t.medianAbsPct > 0 ? t : null;
+}
+const sorteTxt = (p) => (p < 0.0001 ? 'menos de 0,01%' : `${fmt(p * 100, p < 0.1 ? 1 : 0)}%`);
+const vivo = () => !!(LIVE && LIVE.fresh);
+
+function renderPlacar() {
+  const s = D.summary;
+  const cor = (v) => (v === null || !s.prova ? 'muted' : sinal(v));
+  const set = (id, text, cls) => { $(id).textContent = text; $(id).className = cls || ''; };
+  set('t-lado', s.mediaNoLadoPct === null ? '—' : pct(s.mediaNoLadoPct), cor(s.mediaNoLadoPct));
+  $('t-lado-s').textContent = 'antes da taxa';
+  $('t-taxa-l').textContent = `Com a taxa (${fmt(2 * D.feePct, 1)}% ida e volta)`;
+  set('t-taxa', s.mediaComTaxaPct === null ? '—' : pct(s.mediaComTaxaPct), cor(s.mediaComTaxaPct));
+  set('t-pior', s.piorPct === null ? '—' : pct(s.piorPct), cor(s.piorPct));
+  set('t-conf', String(s.conferidas), s.prova ? '' : 'muted');
+  $('t-conf-s').textContent = `${s.emAberto} em aberto · ${s.anotacoesSemPrevisao} só anotação`
+    + (s.semConferencia ? ` · ${s.semConferencia} sem conferência` : '');
+  set('t-acerto', s.conferidas ? `${s.acertos} de ${s.conferidas}` : '—', s.prova ? '' : 'muted');
+  $('t-acerto-s').textContent = s.conferidas ? `${fmt(s.acertoPct, 0)}% · uma moeda faria isso ou mais em ${sorteTxt(s.sorte)} das vezes` : '';
+  $('aviso').textContent = s.prova
+    ? 'O número que importa é o resultado com a taxa: acertar o lado não é ganhar dinheiro.'
+    : `Com menos de ${s.minimoParaProvar} previsões conferidas, o placar não prova nada (faltam ${s.minimoParaProvar - s.conferidas}). Por isso os números estão em cinza.`;
+}
+
+function linha(n) {
+  const tr = el('tr');
+  tr.appendChild(el('td', quando(n.time)));
+
+  const tx = el('td', undefined, 'txt');
+  tx.appendChild(el('div', n.text, 'nota'));
+  tx.appendChild(el('small', n.kind + (n.source ? ' · ' + n.source : '')));
+  tr.appendChild(tx);
+
+  const pv = el('td');
+  if (n.side) {
+    const h = D.horizons.find((x) => x.minutes === n.horizonMin);
+    pv.appendChild(el('b', n.side === 'alta' ? '▲ alta' : '▼ baixa', n.side === 'alta' ? 'up' : 'down'));
+    pv.appendChild(el('small', `em ${h ? h.label : n.horizonMin + ' min'}`));
+  } else pv.appendChild(el('span', 'só anotação', 'muted'));
+  tr.appendChild(pv);
+
+  const s = n.score;
+  const rf = el('td');
+  if (n.refPrice !== null) {
+    rf.textContent = fmt(n.refPrice);
+    rf.appendChild(el('small', `às ${hora(n.refTime + MINUTO)}`));
+  } else if (n.refTime !== null && s.status !== 'sem preco de referencia' && n.seenPrice !== null) {
+    rf.className = 'muted';
+    rf.textContent = '…';
+    rf.appendChild(el('small', `o minuto ainda não fechou (na tela: ${fmt(n.seenPrice)})`));
+  } else {
+    rf.className = 'muted';
+    rf.textContent = '—';
+    if (n.side) rf.appendChild(el('small', 'sem preço de referência'));
+  }
+  tr.appendChild(rf);
+
+  const rs = el('td');
+  const pm = el('td', '', 'muted');
+  if (s.status === 'ok') {
+    rs.appendChild(el('b', pct(s.favorPct), sinal(s.favorPct)));
+    rs.appendChild(el('small', `${s.hit ? 'acertou o lado' : 'errou o lado'} · com taxa ${pct(s.netPct)}`));
+    const t = tipico(n.horizonMin);
+    if (t) rs.appendChild(el('small', `${fmt(Math.abs(s.retPct) / t.medianAbsPct, 1)}× o típico`));
+    rs.title = `O preço foi de ${fmt(s.refPrice)} para ${fmt(s.exitPrice)} (${pct(s.retPct, 3)}). O prazo terminou em ${quando(s.dueAt)}.`;
+    pm.textContent = pct(s.worstPct);
+    pm.className = s.worstPct < 0 ? 'down' : 'muted';
+    pm.title = 'O ponto mais contrário à previsão dentro do prazo.';
+  } else if (s.status === 'ainda nao venceu') {
+    rs.appendChild(el('span', `vence ${quando(s.dueAt)}`, 'muted'));
+    if (s.favorNowPct !== null) rs.appendChild(el('small', `até agora ${pct(s.favorNowPct)}`));
+    pm.textContent = '…';
+  } else if (s.status === 'aguardando o minuto fechar') {
+    rs.appendChild(el('span', 'começa quando o minuto fechar', 'muted'));
+    pm.textContent = '…';
+  } else if (s.status !== 'sem previsao') {
+    rs.appendChild(el('span', '—', 'muted'));
+    rs.appendChild(el('small', s.status === 'faltam candles' ? 'faltam candles no período' : 'sem preço de referência'));
+  }
+  tr.appendChild(rs);
+  tr.appendChild(pm);
+  return tr;
+}
+
+function tabelaGrupos(alvo, grupos, nome) {
+  const box = $(alvo);
+  box.textContent = '';
+  const comDados = grupos.filter((g) => g.conferidas > 0);
+  if (!comDados.length) { box.appendChild(el('div', 'Nenhuma previsão conferida ainda.', 'muted')); return; }
+  const t = el('table');
+  const h = el('tr');
+  for (const x of ['', 'No lado', 'Com taxa', 'Acertos']) h.appendChild(el('th', x));
+  t.appendChild(el('thead')).appendChild(h);
+  const body = t.appendChild(el('tbody'));
+  for (const g of comDados) {
+    const tr = el('tr');
+    tr.appendChild(el('td', nome(g)));
+    tr.appendChild(el('td', pct(g.mediaNoLadoPct), g.prova ? sinal(g.mediaNoLadoPct) : 'muted'));
+    tr.appendChild(el('td', pct(g.mediaComTaxaPct), g.prova ? sinal(g.mediaComTaxaPct) : 'muted'));
+    tr.appendChild(el('td', `${g.acertos} de ${g.conferidas}`, g.prova ? '' : 'muted'));
+    body.appendChild(tr);
+  }
+  box.appendChild(t);
+}
+
+function render() {
+  renderPlacar();
+  const rows = $('rows');
+  rows.textContent = '';
+  if (!D.notes.length) {
+    const td = el('td', 'Nenhuma anotação ainda. Escreva a primeira no formulário ao lado.', 'muted');
+    td.colSpan = 6; td.style.textAlign = 'left';
+    rows.appendChild(el('tr')).appendChild(td);
+  }
+  for (const n of D.notes) rows.appendChild(linha(n));
+
+  tabelaGrupos('porassunto', D.summary.porAssunto, (g) => g.kind);
+  tabelaGrupos('porprazo', D.summary.porPrazo, (g) => g.label);
+
+  const tip = $('tipico');
+  tip.textContent = '';
+  tip.append(el('span', 'prazo'), el('span', 'metade das vezes'), el('span', '1 em cada 10'));
+  D.typical.forEach((t, i) => {
+    tip.append(el('b', D.horizons[i].label));
+    if (t.samples < 30) { tip.append(el('span', 'histórico curto'), el('span', '')); return; }
+    tip.append(el('b', `até ${fmt(t.medianAbsPct, 2)}%`), el('b', `mais de ${fmt(t.p90AbsPct, 2)}%`));
+  });
+
+  const lista = $('assuntos');
+  lista.textContent = '';
+  for (const k of new Set([...SUGERIDOS, ...D.kinds])) { const o = el('option'); o.value = k; lista.appendChild(o); }
+  const prazo = $('prazo');
+  if (!prazo.options.length) for (const h of D.horizons) { const o = el('option', h.label); o.value = h.minutes; prazo.appendChild(o); }
+}
+
+// ---------- preco de agora ----------
+function textoConfirma() {
+  const fim = ' Depois de gravar, não dá para alterar nem apagar.';
+  if (!side) return 'Anotação sem previsão: não entra no placar.' + fim;
+  const h = D.horizons.find((x) => String(x.minutes) === $('prazo').value);
+  const p = vivo() && LIVE.price !== null ? ` (na tela agora: ${fmt(LIVE.price)})` : '';
+  return `Você espera ${side.toUpperCase()} em ${h.label}. Vale a partir do preço do fim deste minuto${p}.` + fim;
+}
+
+function renderLive() {
+  const p = $('preco');
+  if (vivo() && LIVE.price !== null) {
+    p.textContent = `${D ? D.symbol + ' ' : ''}${fmt(LIVE.price)} · ao vivo`;
+    p.className = '';
+  } else {
+    p.textContent = 'sem preço ao vivo';
+    p.className = 'down';
+  }
+  $('semvivo').hidden = vivo();
+  if (!$('confirma').hidden) $('confirmatxt').textContent = textoConfirma();
+}
+
+// ---------- formulario ----------
+function fechaConfirma() {
+  $('confirma').hidden = true;
+  $('gravar').hidden = false;
+}
+function setSide(v) {
+  side = v;
+  for (const b of document.querySelectorAll('.lado button')) b.classList.toggle('on', b.dataset.side === v);
+  $('prazo').disabled = !v;
+  fechaConfirma();
+}
+for (const b of document.querySelectorAll('.lado button')) b.onclick = () => setSide(b.dataset.side);
+$('prazo').onchange = fechaConfirma;
+
+$('gravar').onclick = () => {
+  if (!D) return say('Ainda carregando.', true);
+  if (!$('texto').value.trim()) return say('Escreva a anotação.', true);
+  if (side && !vivo()) return say('Sem preço ao vivo da Binance: a previsão não pode ser gravada agora.', true);
+  say('');
+  $('confirmatxt').textContent = textoConfirma();
+  $('confirma').hidden = false;
+  $('gravar').hidden = true;
+};
+$('nao').onclick = fechaConfirma;
+$('sim').onclick = async () => {
+  $('sim').disabled = true;
+  try {
+    D = await api('/api/notes', {
+      text: $('texto').value, kind: $('assunto').value, source: $('fonte').value,
+      side, horizonMin: side ? Number($('prazo').value) : null,
+    });
+    render();
+    say(side ? 'Previsão gravada.' : 'Anotação gravada.');
+    $('texto').value = '';
+    $('fonte').value = '';
+    setSide('');
+  } catch (err) {
+    say(err.message, true);
+    fechaConfirma();
+  } finally {
+    $('sim').disabled = false;
+  }
+};
+
+// ---------- carga ----------
+async function load() {
+  try {
+    D = await api('/api/notes');
+    render();
+    if (semServidor) { semServidor = false; say(''); }
+  } catch (err) {
+    semServidor = true;
+    say('Sem resposta do servidor; tentando de novo…', true);
+  }
+}
+async function loadLive() {
+  try { LIVE = await api('/api/notes/now'); } catch { LIVE = null; }
+  renderLive();
+}
+load().then(loadLive);
+setInterval(loadLive, 2000);  // o preco de agora
+setInterval(load, 20000);     // a lista: previsoes vencem e ganham resultado sozinhas
+</script>
+</body>
+</html>

@@ -24,7 +24,9 @@ npm start
 ```
 
 Abra http://localhost:3333. Na primeira vez baixa 30 dias de historico (~43 mil candles,
-menos de 1 minuto) para `data/market.db`. Nas seguintes baixa so o que faltou.
+menos de 1 minuto) para `data/market.db`. Nas seguintes baixa so o que faltou. Para ter mais
+historico, suba uma vez com `BACKFILL_DAYS=365 npm start` (1 ano leva uns 4 minutos e 50 MB; o
+que foi baixado fica no banco).
 O historico comeca sempre as 00:00 UTC (vem ate um dia a mais que os 30), para que o primeiro
 candle de 1h, 4h e 1d nao fique incompleto.
 
@@ -131,10 +133,10 @@ igual, e o resultado de la nao prova o que aconteceria com dinheiro real.
 ### A IA do agente
 
 Na mesma tela ha o painel "Conversa com a IA". Ela le os dados do laboratorio (candles,
-ordens grandes, livro, eventos, a conta e as operacoes passadas) e pode registrar uma
-proposta, que aparece esperando a sua decisao como qualquer outra. Ela nao aprova, nao envia
-ordem e nao muda limite: essas funcoes nao estao entre as ferramentas dela. So responde
-quando voce escreve.
+ordens grandes, livro, eventos, o caderno, a conta e as operacoes passadas) e pode registrar
+uma proposta, que aparece esperando a sua decisao como qualquer outra. Ela nao aprova, nao
+envia ordem, nao muda limite e nao escreve no caderno: essas funcoes nao estao entre as
+ferramentas dela. So responde quando voce escreve.
 
 Para ligar:
 
@@ -157,8 +159,80 @@ npm test
 
 roda todos os testes do projeto: a trava de risco, o cliente do Demo Mode, o fluxo inteiro
 contra uma corretora de mentira, a conversa com uma IA de roteiro e a biblioteca da Anthropic
-contra uma API de mentira, alem dos testes do replay e dos eventos. Nenhum usa a internet,
-chave de verdade ou dinheiro. (`scripts/testar-ia-cliente.js` precisa do `npm install`.)
+contra uma API de mentira, alem dos testes do replay, dos eventos e do caderno. Nenhum usa a
+internet, chave de verdade ou dinheiro. (`scripts/testar-ia-cliente.js` precisa do `npm install`.)
+
+## Caderno de anotacoes
+
+Abra http://localhost:3333/caderno. Escreva o que viu, leu ou pensa e, se quiser, o lado que
+espera ("alta" ou "baixa") com um prazo: 1 hora, 4 horas, 1 dia ou 1 semana. O laboratorio
+confere depois e monta o placar.
+
+- O preco de referencia de uma previsao e o fechamento do minuto em que ela foi gravada: um
+  preco que ainda nao existia na hora do clique. O tranco que ja estava na tela nao conta a favor.
+- O resultado vai desse preco ate o fim do prazo. O placar mostra a media no lado previsto, a
+  media com a taxa (como se tivesse operado, sem stop), a pior previsao e, por ultimo, os
+  acertos, ao lado da chance de uma moeda fazer igual ou melhor. Com menos de 20 previsoes
+  conferidas os numeros ficam em cinza: nao provam nada.
+- Previsao so e aceita com o preco ao vivo chegando. Anotacao sem previsao e sempre aceita.
+- Nada pode ser alterado nem apagado (o proprio banco recusa). Errou ao escrever? Grave outra.
+
+```bash
+node scripts/testar-caderno.js
+```
+
+confere as contas (nao precisa do servidor nem da internet).
+
+## Teste reverso: estudo das perdas
+
+```bash
+node scripts/estudo-perdas.js
+```
+
+simula, no historico do banco, uma compra e uma venda de meia em meia hora em tres jeitos de
+operar (contas iguais as do replay), separa so as operacoes que perderam e mede o que elas tem
+em comum. Grava `boletas-so-perdas.csv` e `estudo-perdas.json` em `data/relatorios/<dia>/`. Le
+o banco so em leitura: pode rodar com o programa no ar. E um retrato do periodo, nao uma
+previsao.
+
+## Campeonato de regras
+
+```bash
+node scripts/estudo-regras.js
+```
+
+testa 20 situacoes simples e conhecidas (alta forte, rompimento, cruzamento de media, IFR,
+volume...), comprando e vendendo em cada uma, contra entrar as cegas. Escolhe no treino (tudo
+menos os ultimos 92 dias) e confere na confirmacao (os ultimos 92 dias), para nao tomar sorte
+por regra. Precisa de pelo menos 200 dias de historico. Grava `estudo-regras.json` e
+`boletas-regras.csv` em `data/relatorios/<dia>-regras/`.
+
+## Baleias: ordens grandes do passado
+
+```bash
+node scripts/reconstruir-baleias.js --dias=90
+```
+
+reconstroi o fluxo por minuto e as ordens grandes de um periodo passado, a partir do historico
+publico de negocios da Binance, em `data/baleias.db` (nao toca no banco principal). Sao cerca de
+2 horas e 2 GB de internet para 90 dias; pode ser interrompido e retomado com o mesmo comando.
+Depois:
+
+```bash
+node scripts/estudo-baleias.js
+```
+
+testa 14 situacoes com ordens grandes (o que acontece depois de uma baleia), com o mesmo
+protocolo de treino e confirmacao do campeonato de regras.
+
+## Fotos das telas
+
+```bash
+node scripts/fotos.js "<navegador.exe>" "<pasta de perfil temporario>" "<pasta de saida>" passos.json
+```
+
+fotografa paginas com o Edge ou o Chrome sem janela (com o programa no ar). `passos.json` e uma
+lista como `[{ "name": "grafico", "url": "http://localhost:3333/", "wait": 8000 }]`.
 
 ## Variaveis de ambiente
 

@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "start": "node src/index.js",
-    "test": "node scripts/testar-risco.js && node scripts/testar-demo.js && node scripts/testar-agente.js && node scripts/testar-ia.js && node scripts/testar-ia-cliente.js && node scripts/testar-replay.js && node scripts/testar-eventos.js"
+    "test": "node scripts/testar-risco.js && node scripts/testar-demo.js && node scripts/testar-agente.js && node scripts/testar-ia.js && node scripts/testar-ia-cliente.js && node scripts/testar-replay.js && node scripts/testar-eventos.js && node scripts/testar-caderno.js"
   },
   "engines": {
     "node": ">=22.13"
